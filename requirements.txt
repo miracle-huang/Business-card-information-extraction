@@ -1,0 +1,16 @@
+# ===== Core =====
+ultralytics>=8.3.0
+
+# ===== Deep Learning =====
+torch>=2.0
+torchvision>=0.15
+
+# ===== Image & Data =====
+opencv-python
+numpy
+pillow
+pyyaml
+
+# ===== Utils =====
+tqdm
+matplotlib

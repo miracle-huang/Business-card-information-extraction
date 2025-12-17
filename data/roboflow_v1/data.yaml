@@ -1,0 +1,14 @@
+path: data/roboflow_v1
+train: train/images
+val: valid/images
+test: test/images
+
+nc: 5
+names: ['address', 'company', 'email', 'name', 'phone']
+
+roboflow:
+  workspace: learn-yolov11
+  project: jp-business-card-detection
+  version: 1
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/learn-yolov11/jp-business-card-detection/dataset/1
