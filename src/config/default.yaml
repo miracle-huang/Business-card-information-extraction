@@ -1,0 +1,22 @@
+# 数据
+data_yaml: "data/roboflow_v1/data.yaml"
+
+# 训练
+task: "detect"               # detect/segment/classify/pose 等
+model: "yolo11m.pt"          # 最小模型先跑通
+imgsz: 640                   # 小一点更快
+epochs: 100                    # 先跑通：1
+batch: 4                     # 最小 batch
+device: 0                    # 0 / "cpu"
+workers: 0                   # Windows 建议 0，稳定
+seed: 42
+
+# 输出
+project: "runs_local"
+name: "debug_yolo11m_bs2_img640"
+exist_ok: true
+
+# 可选：优化器/冻结/学习率等（先留着，方便今后改）
+optimizer: "auto"
+lr0: null
+freeze: 0

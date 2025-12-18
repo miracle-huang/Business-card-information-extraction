@@ -11,7 +11,18 @@ __pycache__/
 venv/
 env/
 
+# Ultralytics / YOLO
+weights/
+*.pt
+*.cache
+
 # =====================
 # VS Code / IDE
 # =====================
 .vscode/
+
+# =====================
+# results
+# =====================
+runs/
+runs_local/
