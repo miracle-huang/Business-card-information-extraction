@@ -7,6 +7,10 @@ numpy
 pillow
 pyyaml
 
+# ===== OCR (PaddleOCR) =====
+paddleocr>=2.7.0
+paddlepaddle>=2.6.0
+
 # ===== Utils =====
 tqdm
 matplotlib
