@@ -146,8 +146,8 @@ if __name__ == "__main__":
     # ✅ 方式 1：直接写死参数（你要的：从 main 里直接调用）
     # 改成你自己的路径即可，然后直接：python src/predict_ocr.py
     cfg = PredictOCRConfig(
-        weights="runs_local/debug_yolo11m_bs2_img640/weights/best.pt",
-        input_path="data/roboflow_v1/test/images",
+        weights="runs_local/debug_yolo11l_bs4_img640/weights/best.pt",
+        input_path="data/business_card_v2/test/images",
         out_dir="runs_local/ocr_test",
 
         imgsz=960,

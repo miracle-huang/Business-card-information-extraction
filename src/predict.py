@@ -31,9 +31,9 @@ def main(
 if __name__ == "__main__":
     # ===== 在这里直接传参数 =====
     main(
-        model="runs_local/debug_yolo11m_bs2_img640/weights/best.pt",
+        model="runs_local/debug_yolo11l_bs4_img640/weights/best.pt",
         # source="data/roboflow_v1/test/images",
-        source="data/real-business-card",
+        source="data/business_card_v2/test/images",
         device="0",        # 或 "cpu"
         save=True,
     )

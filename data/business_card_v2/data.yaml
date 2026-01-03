@@ -1,6 +1,7 @@
-train: ../train/images
-val: ../valid/images
-test: ../test/images
+path: data/business_card_v2
+train: train/images
+val: valid/images
+test: test/images
 
 nc: 5
 names: ['address', 'company', 'email', 'name', 'phone']
