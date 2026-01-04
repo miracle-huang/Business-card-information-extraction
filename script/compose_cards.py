@@ -157,7 +157,7 @@ def main():
     parser.add_argument("--bg_dir", type=str, default=r"data\background")
     parser.add_argument("--card_dir", type=str, default=r"data\business_card_v2")
     parser.add_argument("--out_dir", type=str, default=r"data\synth_output")
-    parser.add_argument("--n", type=int, default=1)
+    parser.add_argument("--n", type=int, default=5)
     parser.add_argument("--seed", type=int, default=None)
 
     parser.add_argument("--angle_min", type=float, default=0.0)
