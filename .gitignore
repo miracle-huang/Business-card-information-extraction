@@ -26,6 +26,10 @@ weights/
 # =====================
 data/seg_synth_step1/
 data/seg_synth_step2_yolo/
+data/seg_synth_mix/
+data/seg_synth_dynamic/
+data/seg_synth_dynamic_runtime/
+data/seg_synth_mix_runtime/
 
 # =====================
 # results
