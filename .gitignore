@@ -25,6 +25,7 @@ weights/
 # Data files
 # =====================
 data/seg_synth_step1/
+data/seg_synth_step2_yolo/
 
 # =====================
 # results
