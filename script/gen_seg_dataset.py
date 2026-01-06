@@ -1,3 +1,24 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+One-line summary of this module.
+
+Purpose
+-------
+Generate the dataset of photos of a business card placed on a background.
+
+Usage
+-----
+python -m ...
+
+Meta
+----
+File: gen_seg_dataset.py
+Time: 2026-01-05 18:16:59
+Author: HuangZhiying
+Email: 
+"""
+
 import sys
 from pathlib import Path
 
@@ -13,9 +34,9 @@ def main():
     cfg = SynthConfig(
         bg_dir=Path("data/background"),
         card_dir=Path("data/business_card_v2"),
-        out_dir=Path("data/seg_synth_step1"),
+        out_dir=Path("data/try_business_card_dectection"),
 
-        num_images=60,
+        num_images=10,
 
         # 输出画布大小（清晰度相关）
         out_w=1536,
