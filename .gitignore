@@ -31,6 +31,7 @@ data/seg_synth_dynamic/
 data/seg_synth_dynamic_runtime/
 data/seg_synth_mix_runtime/
 data/try_business_card_dectection/
+data/synth_kpt_pool/
 
 # =====================
 # results
