@@ -1,0 +1,10 @@
+# YOLO Pose dataset config (4 semantic corners: TL, TR, BR, BL)
+path: data/synth_kpt_static
+train: images/train
+val: images/val
+
+names:
+  0: card
+
+# 4 keypoints, each (x, y, v)
+kpt_shape: [4, 3]

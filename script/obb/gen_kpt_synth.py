@@ -19,10 +19,10 @@ CFG = SynthKptConfig(
     card_dir=Path(r"data\business_card_raw"),
 
     # 输出路径
-    out_dir=Path(r"data\synth_kpt_pool"),
+    out_dir=Path(r"data/test_images_obb"),
 
     # 生成多少张
-    num_images=40,
+    num_images=10,
 
     # 输出图片尺寸
     out_w=1536,
