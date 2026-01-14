@@ -36,6 +36,7 @@ weights/
 # data/synth_kpt_runtime/
 # data/test_images_obb/
 data/
+assets/
 
 # =====================
 # results
