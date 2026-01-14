@@ -1,38 +1,50 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Step1 (Rigid-only, vertex-centered corner boxes):
-- Each synthesized image places 2~4 cards.
-- Card size is kept consistent by resizing all cards to a fixed width.
-- NO perspective / NO shear / NO random scaling variations.
-- Only rotation + translation when compositing onto background (warpAffine).
-- No overlap (strict), optional min gap via mask dilation.
-- Corner detection boxes are SQUARE boxes centered at the 4 corner vertices,
-  so that each vertex is exactly at the center of its corner bbox.
+Step1 (Rigid-only, optimized):
+✅ Optimization 1: ROI-only warpAffine (no full-image warps per trial)
+✅ Optimization 2: Fast AABB reject before any warp/mask work
+✅ Optimization 3: uint8 masks + INTER_NEAREST + countNonZero overlap test
+✅ Optimization 6: Multiprocessing (Windows-friendly, spawn)
 
-Classes (fixed order):
+Synthesis constraints:
+- Each synthesized image places 2~4 cards (random).
+- Card size kept consistent by resizing all cards to fixed width (not random scaling).
+- Only rotation + translation when compositing onto background (no perspective/shear).
+- Strict no overlap (optional minimum gap).
+- Corner boxes are SQUARE bboxes centered at the 4 vertices (TL/TR/BR/BL).
+
+YOLO classes (fixed order):
 0: card
 1: corner_tl
 2: corner_tr
 3: corner_br
 4: corner_bl
+
+How to use:
+1) Edit CONFIG paths/params
+2) Run: python synth_step1_optimized.py
 """
 
 from __future__ import annotations
 
+import math
+import os
 import random
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
+import multiprocessing as mp
 
 IMG_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
 
 
 # =========================
-# ✅ CONFIG: edit here
+# ✅ CONFIG: edit here (NO CLI args)
 # =========================
 @dataclass
 class SynthConfig:
@@ -51,15 +63,15 @@ class SynthConfig:
     max_cards: int = 4
 
     # distance to image border (pixels)
-    margin_to_img: int = 80
+    margin_to_img: int = 90
 
     # strict no overlap. If you want a visible gap, set >0 (pixels).
-    min_gap_between_cards: int = 0
+    min_gap_between_cards: int = 40
 
     # fixed card width in pixels AFTER resizing (keeps size consistent)
     fixed_card_w: int = 700
 
-    # full rotation (no restriction)
+    # full rotation range
     angle_min: float = 0.0
     angle_max: float = 360.0
 
@@ -71,8 +83,14 @@ class SynthConfig:
     # placement attempts
     max_place_trials_per_card: int = 140
 
+    # max retries for one output image (if too strict constraints)
+    max_image_retries: int = 40
+
     # debug visualization
     save_debug: bool = True
+
+    # multiprocessing
+    num_workers: int = max(1, (os.cpu_count() or 8) - 1)
 
     seed: int = 42
 
@@ -81,12 +99,14 @@ CONFIG = SynthConfig(
     bg_dir=Path(r"data/background"),
     card_dir=Path(r"data/business_card_raw"),
     out_dir=Path(r"data/four_angles/synth_step1_rigid_vertexcorner"),
-    num_images=10,
+    num_images=120,
     # out_w=1920, out_h=1080,  # 可选：统一背景尺寸；否则保持原尺寸
-    margin_to_img=90,          # 建议 >= corner_box_max//2 + 10
-    min_gap_between_cards=40,   # 严格不重叠（0即可）
-    fixed_card_w=700,          # 所有名片统一宽度（像素）
-    save_debug=True,
+    margin_to_img=90,
+    min_gap_between_cards=40,    # 名片之间距离更大
+    fixed_card_w=700,
+    save_debug=True,             # 批量生成想快一点可改 False
+    num_workers=6,               # 你也可以改成 1（单进程）
+    seed=42,
 )
 
 
@@ -115,8 +135,14 @@ def list_images(folder: Path) -> List[Path]:
     return sorted([p for p in folder.rglob("*") if p.is_file() and p.suffix.lower() in IMG_EXTS])
 
 
+def ensure_clean_dir(p: Path) -> None:
+    if p.exists():
+        shutil.rmtree(p)
+    p.mkdir(parents=True, exist_ok=True)
+
+
 # =========================
-# BBox / labels
+# Math / geometry
 # =========================
 def clamp_bbox_xyxy(xmin: float, ymin: float, xmax: float, ymax: float, w: int, h: int) -> Tuple[float, float, float, float]:
     xmin = max(0.0, min(float(w - 1), xmin))
@@ -150,9 +176,6 @@ def corner_square_bbox(pt_xy: np.ndarray, side: int, img_w: int, img_h: int) -> 
     return clamp_bbox_xyxy(xmin, ymin, xmax, ymax, img_w, img_h)
 
 
-# =========================
-# Affine helpers
-# =========================
 def affine_transform_points(M: np.ndarray, pts: np.ndarray) -> np.ndarray:
     """Apply 2x3 affine matrix to points (N,2)."""
     pts = pts.astype(np.float32)
@@ -177,9 +200,7 @@ def corners_within_margin(quad: np.ndarray, img_w: int, img_h: int, margin: int)
 
 def build_affine_rotation_translation(Wc: int, Hc: int, angle_deg: float, center_bg: Tuple[float, float]) -> np.ndarray:
     """
-    Build affine matrix M that:
-    - rotates card around its own center (Wc/2, Hc/2) by angle_deg
-    - translates so that card center maps to center_bg (cx,cy)
+    Rotate around card center, then translate so card center maps to center_bg.
     """
     cx_bg, cy_bg = center_bg
     center_card = (Wc / 2.0, Hc / 2.0)
@@ -189,10 +210,53 @@ def build_affine_rotation_translation(Wc: int, Hc: int, angle_deg: float, center
     return M.astype(np.float32)
 
 
+def aabb_intersects(a: Tuple[float, float, float, float], b: Tuple[float, float, float, float]) -> bool:
+    ax0, ay0, ax1, ay1 = a
+    bx0, by0, bx1, by1 = b
+    # no intersection if separated
+    if ax1 <= bx0 or bx1 <= ax0 or ay1 <= by0 or by1 <= ay0:
+        return False
+    return True
+
+
+def compute_roi_from_bbox(
+    bbox_xyxy: Tuple[float, float, float, float],
+    img_w: int,
+    img_h: int,
+    pad: int,
+) -> Optional[Tuple[int, int, int, int]]:
+    """
+    ROI bounds [x0,x1), [y0,y1) with padding, clamped.
+    """
+    x0, y0, x1, y1 = bbox_xyxy
+    rx0 = int(math.floor(x0 - pad))
+    ry0 = int(math.floor(y0 - pad))
+    rx1 = int(math.ceil(x1 + pad))
+    ry1 = int(math.ceil(y1 + pad))
+
+    rx0 = max(0, min(img_w, rx0))
+    ry0 = max(0, min(img_h, ry0))
+    rx1 = max(0, min(img_w, rx1))
+    ry1 = max(0, min(img_h, ry1))
+
+    if rx1 - rx0 <= 1 or ry1 - ry0 <= 1:
+        return None
+    return rx0, ry0, rx1, ry1
+
+
 # =========================
-# Card preprocessing
+# Preprocess cards (fixed size, cached per worker)
 # =========================
-def resize_card_to_fixed_width(card: np.ndarray, fixed_w: int) -> np.ndarray:
+@dataclass
+class CardCacheItem:
+    bgr: np.ndarray          # (H,W,3) uint8
+    mask_u8: np.ndarray      # (H,W) uint8 0/255
+    H: int
+    W: int
+    corner_side: int         # precomputed corner bbox side length
+
+
+def resize_card_to_fixed_width_keep_alpha(card: np.ndarray, fixed_w: int) -> np.ndarray:
     """Resize card to fixed width (keep aspect ratio). Keep alpha if present."""
     if card.ndim == 2:
         card = cv2.cvtColor(card, cv2.COLOR_GRAY2BGR)
@@ -210,45 +274,87 @@ def resize_card_to_fixed_width(card: np.ndarray, fixed_w: int) -> np.ndarray:
     return resized
 
 
-# =========================
-# Warp/composite (Rigid only)
-# =========================
-def warp_card_affine_to_bg(bg_bgr: np.ndarray, card_img: np.ndarray, M: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Warp card onto background with affine M (2x3).
-    Returns (warp_bgr, warp_mask01).
-    mask uses alpha if present else full 1.
-    """
-    h_bg, w_bg = bg_bgr.shape[:2]
+def get_card_cached(
+    cache: Dict[str, CardCacheItem],
+    card_path: str,
+    cfg: SynthConfig,
+) -> CardCacheItem:
+    if card_path in cache:
+        return cache[card_path]
 
-    if card_img.shape[2] == 4:
-        bgr = card_img[:, :, :3]
-        alpha = card_img[:, :, 3].astype(np.float32) / 255.0
-        mask = alpha
+    raw = imread_any(Path(card_path))
+    resized = resize_card_to_fixed_width_keep_alpha(raw, cfg.fixed_card_w)
+
+    if resized.ndim == 2:
+        resized = cv2.cvtColor(resized, cv2.COLOR_GRAY2BGR)
+
+    if resized.shape[2] == 4:
+        bgr = resized[:, :, :3].copy()
+        alpha = resized[:, :, 3].copy()
+        mask_u8 = alpha  # already 0..255
     else:
-        bgr = card_img
-        mask = np.ones((card_img.shape[0], card_img.shape[1]), dtype=np.float32)
+        bgr = resized[:, :, :3].copy()
+        mask_u8 = np.full((bgr.shape[0], bgr.shape[1]), 255, dtype=np.uint8)
 
+    Hc, Wc = bgr.shape[:2]
+
+    side = int(round(cfg.corner_box_ratio * min(Wc, Hc)))
+    side = max(cfg.corner_box_min, min(cfg.corner_box_max, side))
+
+    item = CardCacheItem(
+        bgr=bgr,
+        mask_u8=mask_u8,
+        H=Hc,
+        W=Wc,
+        corner_side=side,
+    )
+    cache[card_path] = item
+    return item
+
+
+# =========================
+# ROI warp/composite (Optimizations 1 & 3)
+# =========================
+def warp_affine_roi(
+    card_bgr: np.ndarray,
+    card_mask_u8: np.ndarray,
+    M_roi: np.ndarray,
+    roi_w: int,
+    roi_h: int,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Warp card bgr (linear) + mask (nearest) to ROI size.
+    mask is uint8 0/255.
+    """
     warp_bgr = cv2.warpAffine(
-        bgr, M, (w_bg, h_bg),
+        card_bgr,
+        M_roi,
+        (roi_w, roi_h),
         flags=cv2.INTER_LINEAR,
         borderMode=cv2.BORDER_CONSTANT,
         borderValue=(0, 0, 0),
     )
     warp_mask = cv2.warpAffine(
-        mask, M, (w_bg, h_bg),
-        flags=cv2.INTER_LINEAR,
+        card_mask_u8,
+        M_roi,
+        (roi_w, roi_h),
+        flags=cv2.INTER_NEAREST,
         borderMode=cv2.BORDER_CONSTANT,
-        borderValue=0.0,
+        borderValue=0,
     )
-    warp_mask = np.clip(warp_mask, 0.0, 1.0)
     return warp_bgr, warp_mask
 
 
-def composite(bg_bgr: np.ndarray, fg_bgr: np.ndarray, mask01: np.ndarray) -> np.ndarray:
-    mask3 = mask01[:, :, None]
-    out = bg_bgr.astype(np.float32) * (1.0 - mask3) + fg_bgr.astype(np.float32) * mask3
-    return np.clip(out, 0, 255).astype(np.uint8)
+def composite_roi_inplace(bg_roi: np.ndarray, fg_roi: np.ndarray, mask_u8: np.ndarray) -> None:
+    """
+    Composite fg over bg for ROI only. mask_u8 is 0/255.
+    (Using float only on ROI, cheap compared to full-frame.)
+    """
+    if mask_u8.ndim != 2:
+        raise ValueError("mask_u8 must be HxW")
+    alpha = (mask_u8.astype(np.float32) / 255.0)[:, :, None]
+    out = bg_roi.astype(np.float32) * (1.0 - alpha) + fg_roi.astype(np.float32) * alpha
+    bg_roi[:] = np.clip(out, 0, 255).astype(np.uint8)
 
 
 # =========================
@@ -280,197 +386,287 @@ def draw_debug(
 
 
 # =========================
-# Synthesis
+# Single image synthesis (fast)
 # =========================
-def synth_one(
+def synth_one_image(
     cfg: SynthConfig,
-    bg_path: Path,
-    card_paths: List[Path],
-    card_cache: Dict[Path, np.ndarray],
+    bg_paths: List[str],
+    card_paths: List[str],
+    idx: int,
     out_img_path: Path,
     out_lbl_path: Path,
     out_dbg_path: Optional[Path],
+    card_cache: Dict[str, CardCacheItem],
 ) -> bool:
-    rng = random.Random(cfg.seed + hash(out_img_path.stem) % (10**9))
+    # Retry different random attempts if constraints too strict
+    for retry in range(cfg.max_image_retries):
+        rng = random.Random(cfg.seed + idx * 1000003 + retry * 99991)
 
-    bg_raw = imread_any(bg_path)
-    if bg_raw.ndim == 2:
-        bg_raw = cv2.cvtColor(bg_raw, cv2.COLOR_GRAY2BGR)
-    bg_bgr = bg_raw[:, :, :3] if (bg_raw.ndim == 3 and bg_raw.shape[2] == 4) else bg_raw
+        bg_path = Path(rng.choice(bg_paths))
+        bg_raw = imread_any(bg_path)
 
-    if cfg.out_w is not None and cfg.out_h is not None:
-        bg_bgr = cv2.resize(bg_bgr, (cfg.out_w, cfg.out_h), interpolation=cv2.INTER_AREA)
+        if bg_raw.ndim == 2:
+            bg_raw = cv2.cvtColor(bg_raw, cv2.COLOR_GRAY2BGR)
+        bg_bgr = bg_raw[:, :, :3] if (bg_raw.ndim == 3 and bg_raw.shape[2] == 4) else bg_raw
 
-    img_h, img_w = bg_bgr.shape[:2]
+        if cfg.out_w is not None and cfg.out_h is not None:
+            bg_bgr = cv2.resize(bg_bgr, (cfg.out_w, cfg.out_h), interpolation=cv2.INTER_AREA)
 
-    # occupancy mask for overlap control
-    occ = np.zeros((img_h, img_w), dtype=np.uint8)
+        img_h, img_w = bg_bgr.shape[:2]
 
-    num_cards = rng.randint(cfg.min_cards, cfg.max_cards)
+        # Occupancy mask: uint8 0/255
+        occ = np.zeros((img_h, img_w), dtype=np.uint8)
 
-    labels: List[str] = []
-    all_quads: List[np.ndarray] = []
-    all_card_bboxes: List[Tuple[float, float, float, float]] = []
-    all_corner_bboxes: List[List[Tuple[int, Tuple[float, float, float, float]]]] = []
+        num_cards_target = rng.randint(cfg.min_cards, cfg.max_cards)
 
-    placed = 0
-    max_global_trials = num_cards * cfg.max_place_trials_per_card
+        placed_boxes_expanded: List[Tuple[float, float, float, float]] = []  # for Optimization 2
+        labels: List[str] = []
+        quads_dbg: List[np.ndarray] = []
+        card_bboxes_dbg: List[Tuple[float, float, float, float]] = []
+        corner_bboxes_dbg: List[List[Tuple[int, Tuple[float, float, float, float]]]] = []
 
-    for _ in range(max_global_trials):
-        if placed >= num_cards:
-            break
+        placed = 0
+        max_trials = num_cards_target * cfg.max_place_trials_per_card
 
-        card_path = rng.choice(card_paths)
-
-        # cache resized to fixed width
-        if card_path not in card_cache:
-            raw = imread_any(card_path)
-            card_cache[card_path] = resize_card_to_fixed_width(raw, cfg.fixed_card_w)
-        card_img = card_cache[card_path]
-
-        if card_img.ndim != 3:
-            continue
-
-        Hc, Wc = card_img.shape[:2]
-        if Wc < 10 or Hc < 10:
-            continue
-
-        # Corner box side length based on card size
-        side = int(round(cfg.corner_box_ratio * min(Wc, Hc)))
-        side = max(cfg.corner_box_min, min(cfg.corner_box_max, side))
-
-        # Safety: ensure margin is enough for vertex-centered corner boxes
-        if cfg.margin_to_img < (side // 2 + 5):
-            # not fatal, but would be frequently clamped; better to raise
-            pass
-
-        angle = rng.uniform(cfg.angle_min, cfg.angle_max)
-
-        # sample a center; we then validate rotated corners inside margin
-        cx = rng.uniform(cfg.margin_to_img + Wc / 2.0, img_w - cfg.margin_to_img - Wc / 2.0)
-        cy = rng.uniform(cfg.margin_to_img + Hc / 2.0, img_h - cfg.margin_to_img - Hc / 2.0)
-
-        M = build_affine_rotation_translation(Wc, Hc, angle, (cx, cy))
-
-        # quad in bg coords (TL,TR,BR,BL)
-        quad = affine_transform_points(M, card_corners(Wc, Hc))
-
-        # enforce border margin on rotated corners
-        if not corners_within_margin(quad, img_w, img_h, cfg.margin_to_img):
-            continue
-
-        # warp mask for collision test
-        warp_bgr, warp_mask01 = warp_card_affine_to_bg(bg_bgr, card_img, M)
-        warp_mask_u8 = (warp_mask01 > 0.5).astype(np.uint8) * 255
-
-        # strict no overlap (+ optional gap)
-        if cfg.min_gap_between_cards > 0:
-            k = cfg.min_gap_between_cards * 2 + 1
+        # Precompute dilation kernel for gap (Optimization 3)
+        pad = int(cfg.min_gap_between_cards)
+        kernel = None
+        if pad > 0:
+            k = pad * 2 + 1
             kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
-            dilated = cv2.dilate(warp_mask_u8, kernel, iterations=1)
-        else:
-            dilated = warp_mask_u8
 
-        overlap = cv2.bitwise_and(occ, (dilated > 0).astype(np.uint8))
-        if int(overlap.sum()) > 0:
-            continue
+        for _ in range(max_trials):
+            if placed >= num_cards_target:
+                break
 
-        # composite
-        bg_bgr = composite(bg_bgr, warp_bgr, warp_mask01)
-        occ = cv2.bitwise_or(occ, (dilated > 0).astype(np.uint8))
+            card_path = rng.choice(card_paths)
+            card_item = get_card_cached(card_cache, card_path, cfg)
+            Wc, Hc = card_item.W, card_item.H
+            side = card_item.corner_side
 
-        # 1) card bbox (axis-aligned)
-        xmin, ymin, xmax, ymax = bbox_from_points(quad)
-        xmin, ymin, xmax, ymax = clamp_bbox_xyxy(xmin, ymin, xmax, ymax, img_w, img_h)
-        line = yolo_line(0, xmin, ymin, xmax, ymax, img_w, img_h)
-        if line is None:
-            continue
-        labels.append(line)
+            # Use circumscribed radius to sample centers -> fewer invalids
+            radius = 0.5 * math.sqrt(float(Wc * Wc + Hc * Hc))
+            x_min = cfg.margin_to_img + radius
+            x_max = img_w - cfg.margin_to_img - radius
+            y_min = cfg.margin_to_img + radius
+            y_max = img_h - cfg.margin_to_img - radius
+            if x_max <= x_min or y_max <= y_min:
+                # background too small for this card size + margin
+                continue
 
-        # 2) corner bboxes centered at vertices
-        corner_boxes_for_debug: List[Tuple[int, Tuple[float, float, float, float]]] = []
-        corner_class_ids = [1, 2, 3, 4]  # TL,TR,BR,BL
+            angle = rng.uniform(cfg.angle_min, cfg.angle_max)
+            cx = rng.uniform(x_min, x_max)
+            cy = rng.uniform(y_min, y_max)
 
-        for pt, cid in zip(quad, corner_class_ids):
-            cxmin, cymin, cxmax, cymax = corner_square_bbox(pt, side, img_w, img_h)
-            c_line = yolo_line(cid, cxmin, cymin, cxmax, cymax, img_w, img_h)
-            if c_line is not None:
-                labels.append(c_line)
-                corner_boxes_for_debug.append((cid, (cxmin, cymin, cxmax, cymax)))
+            M = build_affine_rotation_translation(Wc, Hc, angle, (cx, cy))
 
-        all_quads.append(quad)
-        all_card_bboxes.append((xmin, ymin, xmax, ymax))
-        all_corner_bboxes.append(corner_boxes_for_debug)
+            quad = affine_transform_points(M, card_corners(Wc, Hc))  # TL,TR,BR,BL
 
-        placed += 1
+            if not corners_within_margin(quad, img_w, img_h, cfg.margin_to_img):
+                continue
 
-    if placed < cfg.min_cards:
-        return False
+            xmin, ymin, xmax, ymax = bbox_from_points(quad)
+            # Expanded AABB for "gap" quick reject (Optimization 2)
+            exp_bbox = (xmin - pad, ymin - pad, xmax + pad, ymax + pad)
 
-    # write outputs
-    out_img_path.parent.mkdir(parents=True, exist_ok=True)
-    out_lbl_path.parent.mkdir(parents=True, exist_ok=True)
-    imwrite(out_img_path, bg_bgr)
-    out_lbl_path.write_text("\n".join(labels) + "\n", encoding="utf-8")
+            # Fast AABB rejection vs previously placed expanded boxes
+            hit = False
+            for b in placed_boxes_expanded:
+                if aabb_intersects(exp_bbox, b):
+                    hit = True
+                    break
+            if hit:
+                continue
 
-    if cfg.save_debug and out_dbg_path is not None:
-        out_dbg_path.parent.mkdir(parents=True, exist_ok=True)
-        dbg = draw_debug(bg_bgr, all_quads, all_card_bboxes, all_corner_bboxes)
-        imwrite(out_dbg_path, dbg)
+            # ROI bounds covering expanded bbox (so dilation is not cut off)
+            roi = compute_roi_from_bbox((xmin, ymin, xmax, ymax), img_w, img_h, pad=pad)
+            if roi is None:
+                continue
+            rx0, ry0, rx1, ry1 = roi
+            roi_w = rx1 - rx0
+            roi_h = ry1 - ry0
 
-    return True
+            # M for ROI coordinates (Optimization 1)
+            M_roi = M.copy()
+            M_roi[0, 2] -= rx0
+            M_roi[1, 2] -= ry0
+
+            # Warp only ROI (Optimization 1) + uint8 mask nearest (Optimization 3)
+            warp_bgr_roi, warp_mask_roi_u8 = warp_affine_roi(
+                card_item.bgr, card_item.mask_u8, M_roi, roi_w=roi_w, roi_h=roi_h
+            )
+
+            # dilate for gap constraint (still ROI)
+            if kernel is not None:
+                dilated_roi = cv2.dilate(warp_mask_roi_u8, kernel, iterations=1)
+            else:
+                dilated_roi = warp_mask_roi_u8
+
+            # overlap check using ROI only (Optimization 3)
+            occ_roi = occ[ry0:ry1, rx0:rx1]
+            inter = cv2.bitwise_and(occ_roi, (dilated_roi > 0).astype(np.uint8) * 255)
+            if cv2.countNonZero(inter) > 0:
+                continue
+
+            # Accept: composite ROI only
+            bg_roi = bg_bgr[ry0:ry1, rx0:rx1]
+            composite_roi_inplace(bg_roi, warp_bgr_roi, warp_mask_roi_u8)
+
+            # Update occupancy with dilated area
+            occ_roi[:] = cv2.bitwise_or(occ_roi, (dilated_roi > 0).astype(np.uint8) * 255)
+
+            # Record expanded bbox for future fast reject (clamp to image bounds lightly)
+            placed_boxes_expanded.append(exp_bbox)
+
+            # Labels: card bbox
+            xmin_c, ymin_c, xmax_c, ymax_c = clamp_bbox_xyxy(xmin, ymin, xmax, ymax, img_w, img_h)
+            l0 = yolo_line(0, xmin_c, ymin_c, xmax_c, ymax_c, img_w, img_h)
+            if l0:
+                labels.append(l0)
+
+            # Corner labels: vertex-centered square boxes
+            corner_ids = [1, 2, 3, 4]
+            corners_for_debug: List[Tuple[int, Tuple[float, float, float, float]]] = []
+            for pt, cid in zip(quad, corner_ids):
+                cxmin, cymin, cxmax, cymax = corner_square_bbox(pt, side, img_w, img_h)
+                l = yolo_line(cid, cxmin, cymin, cxmax, cymax, img_w, img_h)
+                if l:
+                    labels.append(l)
+                    corners_for_debug.append((cid, (cxmin, cymin, cxmax, cymax)))
+
+            # Debug store
+            quads_dbg.append(quad)
+            card_bboxes_dbg.append((xmin_c, ymin_c, xmax_c, ymax_c))
+            corner_bboxes_dbg.append(corners_for_debug)
+
+            placed += 1
+
+        # success criterion: ensure in [min_cards, max_cards]
+        if placed >= cfg.min_cards:
+            # Write outputs
+            imwrite(out_img_path, bg_bgr)
+            out_lbl_path.parent.mkdir(parents=True, exist_ok=True)
+            out_lbl_path.write_text("\n".join(labels) + "\n", encoding="utf-8")
+
+            if cfg.save_debug and out_dbg_path is not None:
+                dbg = draw_debug(bg_bgr, quads_dbg, card_bboxes_dbg, corner_bboxes_dbg)
+                imwrite(out_dbg_path, dbg)
+
+            return True
+
+    return False
 
 
+# =========================
+# Multiprocessing worker (Optimization 6)
+# =========================
+def worker_run(
+    worker_id: int,
+    indices: List[int],
+    cfg: SynthConfig,
+    bg_paths: List[str],
+    card_paths: List[str],
+) -> None:
+    out_img_dir = cfg.out_dir / "images"
+    out_lbl_dir = cfg.out_dir / "labels"
+    out_dbg_dir = cfg.out_dir / "debug_vis"
+
+    card_cache: Dict[str, CardCacheItem] = {}
+
+    for k, idx in enumerate(indices):
+        name = f"synth_{idx:06d}"
+        out_img_path = out_img_dir / f"{name}.jpg"
+        out_lbl_path = out_lbl_dir / f"{name}.txt"
+        out_dbg_path = (out_dbg_dir / f"{name}.jpg") if cfg.save_debug else None
+
+        ok = synth_one_image(
+            cfg=cfg,
+            bg_paths=bg_paths,
+            card_paths=card_paths,
+            idx=idx,
+            out_img_path=out_img_path,
+            out_lbl_path=out_lbl_path,
+            out_dbg_path=out_dbg_path,
+            card_cache=card_cache,
+        )
+        if not ok:
+            raise RuntimeError(
+                f"[Worker {worker_id}] Failed to synthesize image idx={idx} after {cfg.max_image_retries} retries.\n"
+                "Try: reduce fixed_card_w / reduce margin_to_img / reduce min_gap_between_cards / increase out_w,out_h / reduce max_cards."
+            )
+
+        # light progress print
+        if (k + 1) % 20 == 0:
+            print(f"[Worker {worker_id}] done {k+1}/{len(indices)}", flush=True)
+
+
+def split_indices(n: int, num_workers: int) -> List[List[int]]:
+    """Round-robin split to balance load."""
+    buckets = [[] for _ in range(num_workers)]
+    for i in range(n):
+        buckets[i % num_workers].append(i)
+    # remove empty
+    return [b for b in buckets if b]
+
+
+# =========================
+# Main
+# =========================
 def main(cfg: SynthConfig) -> None:
-    bg_paths = list_images(cfg.bg_dir)
-    card_paths = list_images(cfg.card_dir)
+    bg_paths = [str(p) for p in list_images(cfg.bg_dir)]
+    card_paths = [str(p) for p in list_images(cfg.card_dir)]
     if not bg_paths:
         raise FileNotFoundError(f"No background images found in: {cfg.bg_dir}")
     if not card_paths:
         raise FileNotFoundError(f"No card images found in: {cfg.card_dir}")
 
-    out_img_dir = cfg.out_dir / "images"
-    out_lbl_dir = cfg.out_dir / "labels"
-    out_dbg_dir = cfg.out_dir / "debug_vis"
-
-    out_img_dir.mkdir(parents=True, exist_ok=True)
-    out_lbl_dir.mkdir(parents=True, exist_ok=True)
+    # Prepare output dirs (clean rebuild)
+    ensure_clean_dir(cfg.out_dir)
+    (cfg.out_dir / "images").mkdir(parents=True, exist_ok=True)
+    (cfg.out_dir / "labels").mkdir(parents=True, exist_ok=True)
     if cfg.save_debug:
-        out_dbg_dir.mkdir(parents=True, exist_ok=True)
+        (cfg.out_dir / "debug_vis").mkdir(parents=True, exist_ok=True)
 
-    random.seed(cfg.seed)
-    np.random.seed(cfg.seed)
+    print("[INFO] Step1 Optimized Synthesis")
+    print(f"  bg_dir   : {cfg.bg_dir}")
+    print(f"  card_dir : {cfg.card_dir}")
+    print(f"  out_dir  : {cfg.out_dir}")
+    print(f"  num      : {cfg.num_images}")
+    print(f"  cards/img: {cfg.min_cards}~{cfg.max_cards}")
+    print(f"  fixed_w  : {cfg.fixed_card_w}")
+    print(f"  margin   : {cfg.margin_to_img}")
+    print(f"  min_gap  : {cfg.min_gap_between_cards}")
+    print(f"  workers  : {cfg.num_workers}")
+    print(f"  debug    : {cfg.save_debug}")
 
-    card_cache: Dict[Path, np.ndarray] = {}
+    # Single process
+    if cfg.num_workers <= 1:
+        worker_run(
+            worker_id=0,
+            indices=list(range(cfg.num_images)),
+            cfg=cfg,
+            bg_paths=bg_paths,
+            card_paths=card_paths,
+        )
+        print("[OK] Done (single process).")
+        return
 
-    made = 0
-    tries = 0
-    while made < cfg.num_images:
-        bg_path = random.choice(bg_paths)
-        name = f"synth_{made:06d}"
-        out_img_path = out_img_dir / f"{name}.jpg"
-        out_lbl_path = out_lbl_dir / f"{name}.txt"
-        out_dbg_path = out_dbg_dir / f"{name}.jpg" if cfg.save_debug else None
+    # Multiprocessing (Windows-friendly)
+    ctx = mp.get_context("spawn")
+    buckets = split_indices(cfg.num_images, cfg.num_workers)
 
-        ok = synth_one(cfg, bg_path, card_paths, card_cache, out_img_path, out_lbl_path, out_dbg_path)
-        tries += 1
-        if ok:
-            made += 1
+    args_list = []
+    for wid, indices in enumerate(buckets):
+        args_list.append((wid, indices, cfg, bg_paths, card_paths))
 
-        # safety if constraints make placement impossible
-        if tries > cfg.num_images * 80 and made == 0:
-            raise RuntimeError(
-                "Failed too many times. Likely constraints are too strict for your backgrounds.\n"
-                "Try: reduce fixed_card_w / reduce margin_to_img / increase background size / reduce min_cards."
-            )
+    with ctx.Pool(processes=len(buckets)) as pool:
+        pool.starmap(worker_run, args_list)
 
-    print(f"[OK] Generated {made} images into: {cfg.out_dir}")
-    print(f"  images: {out_img_dir}")
-    print(f"  labels: {out_lbl_dir}")
+    print("[OK] Done (multiprocessing).")
+    print(f"  images: {(cfg.out_dir / 'images')}")
+    print(f"  labels: {(cfg.out_dir / 'labels')}")
     if cfg.save_debug:
-        print(f"  debug : {out_dbg_dir}")
-    print(f"[INFO] fixed_card_w={cfg.fixed_card_w}, margin_to_img={cfg.margin_to_img}, min_gap={cfg.min_gap_between_cards}")
-    print(f"[INFO] corner_box_ratio={cfg.corner_box_ratio}, corner_box_min={cfg.corner_box_min}, corner_box_max={cfg.corner_box_max}")
+        print(f"  debug : {(cfg.out_dir / 'debug_vis')}")
 
 
 if __name__ == "__main__":
