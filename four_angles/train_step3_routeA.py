@@ -65,7 +65,7 @@ RUNTIME_CHECK_DRAW_CORNER_CENTERS = True
 
 # train hyperparams
 MODEL_WEIGHTS = "yolo11m.pt"
-EPOCHS = 5
+EPOCHS = 100
 IMGSZ = 960
 BATCH = 4          # 建议偶数（保证每 batch 50/50）
 WORKERS = 4

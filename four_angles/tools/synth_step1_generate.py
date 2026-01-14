@@ -19,9 +19,9 @@ from four_angles.src.synth.rigid_synth import SynthConfig, generate_dataset  # n
 CONFIG = SynthConfig(
     bg_dir=Path(r"data/background"),
     card_dir=Path(r"data/business_card_raw"),
-    out_dir=Path(r"four_angles/assets/step1_out"),
+    out_dir=Path(r"four_angles/assets/step1_out_test_model"),
 
-    num_images=60,
+    num_images=20,
 
     # out_w=1920, out_h=1080,  # 可选：统一背景尺寸；否则保持原尺寸
 
