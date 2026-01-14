@@ -24,17 +24,18 @@ weights/
 # =====================
 # Data files
 # =====================
-data/seg_synth_step1/
-data/seg_synth_step2_yolo/
-data/seg_synth_mix/
-data/seg_synth_dynamic/
-data/seg_synth_dynamic_runtime/
-data/seg_synth_mix_runtime/
-data/try_business_card_dectection/
-data/synth_kpt_pool/
-data/synth_kpt_static/
-data/synth_kpt_runtime/
-data/test_images_obb/
+# data/seg_synth_step1/
+# data/seg_synth_step2_yolo/
+# data/seg_synth_mix/
+# data/seg_synth_dynamic/
+# data/seg_synth_dynamic_runtime/
+# data/seg_synth_mix_runtime/
+# data/try_business_card_dectection/
+# data/synth_kpt_pool/
+# data/synth_kpt_static/
+# data/synth_kpt_runtime/
+# data/test_images_obb/
+data/
 
 # =====================
 # results
