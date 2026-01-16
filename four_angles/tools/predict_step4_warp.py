@@ -1,20 +1,18 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-four_angles/tools/predict_step4_warp.py
+four_angles/tools/predict_step4_warp_v2.py
 
-Step4:
-- Use trained YOLO detection model (5 classes: card + 4 corners).
-- For each detected card:
-    - find 4 semantic corners (tl,tr,br,bl) inside/near the card bbox
-    - use the CENTER of each corner bbox as the vertex point
-    - compute perspective transform and warp to upright card crop
-- Save:
-    out_dir/warps/<image_stem>_cardXX.jpg
-    out_dir/json/<image_stem>_cardXX.json
-    out_dir/debug_vis/<image_stem>.jpg  (optional)
+Step4 improved (no retrain):
+1) Two-pass inference:
+   - pass A: detect cards only with higher conf, stricter iou
+   - pass B: detect corners only with lower conf, looser iou
+2) Corner association is CLASS-AGNOSTIC:
+   - ignore predicted corner cls (TL/TR/BR/BL may be confused)
+   - choose 4 corner points by geometry (nearest to expected card corners)
+3) Extra card de-dup (custom NMS) to reduce repeated/false card boxes.
 
-Classes (must match your dataset.yaml):
+Assumed classes (dataset.yaml order):
 0: card
 1: corner_tl
 2: corner_tr
@@ -26,7 +24,7 @@ from __future__ import annotations
 
 import json
 import math
-import sys
+import itertools
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -41,38 +39,43 @@ IMG_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
 # =========================
 # CONFIG (edit here)
 # =========================
-# ✅ model weights (改成你的 best.pt 路径)
-MODEL_WEIGHTS = Path(r"four_angles/runs/step3_detect_routeA/weights/best.pt")
+MODEL_WEIGHTS = Path(r"four_angles/runs/step3_detect/weights/best.pt")
 DEVICE = 0  # 0 / "cpu"
 
-# ✅ input images (file or folder)
-SOURCE = Path(r"four_angles/assets/step1_out_test_model/images")  # 也可以是单张图片路径
-
-# ✅ output
+SOURCE = Path(r"four_angles/assets/step1_test/images")  # folder or file
 OUT_DIR = Path(r"four_angles/outputs/step4_out")
 SAVE_DEBUG_VIS = True
 
-# ✅ predict params
+# model input size
 IMGSZ = 1280
-CONF_THRES_CARD = 0.25
-# CONF_THRES_CORNER = 0.25
-CONF_THRES_CORNER = 0.05
-IOU_NMS = 0.5
-MAX_DET = 300
+MAX_DET = 1000
 
-# ✅ association params
-# corners must be inside expanded card bbox
-CARD_EXPAND_RATIO = 0.08   # expand by ratio of card size
-CARD_EXPAND_PX = 24        # and/or fixed pixels
-DIST_ALPHA = 0.8           # score = conf - alpha*(dist/diag)
+# ---- Pass A (cards) ----
+CARD_CONF = 0.30
+CARD_IOU = 0.40
+CARD_MIN_AREA_RATIO = 0.01  # filter tiny false cards, area >= ratio * image_area
+CARD_NMS_IOU = 0.50         # custom NMS for cards (reduce duplicates)
 
-# ✅ warp sanity
+# ---- Pass B (corners) ----
+CORNER_CONF = 0.05
+CORNER_IOU = 0.70
+
+# ---- Association ----
+CARD_EXPAND_RATIO = 0.18    # larger than before (more tolerant)
+CARD_EXPAND_PX = 80
+
+# cost = dist/diag - GAMMA*conf  (lower is better)
+GAMMA = 0.6
+TOPK_PER_CORNER = 6         # take topK candidates for each expected corner, brute-force 6^4=1296
+
+# ---- Warp sanity ----
 MIN_WARP_W = 80
 MIN_WARP_H = 50
-MAX_WARP_EDGE = 2500       # clamp if super large
-
-# If True, force output to landscape (width >= height) by rotating 90 if needed
+MAX_WARP_EDGE = 2500
 FORCE_LANDSCAPE = False
+
+# class names for debug
+NAMES = ["card", "TL", "TR", "BR", "BL"]
 
 
 # =========================
@@ -146,30 +149,22 @@ def quad_size(quad: np.ndarray) -> Tuple[int, int]:
 
 
 def warp_from_quad(img_bgr: np.ndarray, quad: np.ndarray) -> Optional[np.ndarray]:
-    H_img, W_img = img_bgr.shape[:2]
     quad = quad.astype(np.float32)
-
-    # size
     W, H = quad_size(quad)
     if W < MIN_WARP_W or H < MIN_WARP_H:
         return None
-
-    # clamp insane
     W = min(W, MAX_WARP_EDGE)
     H = min(H, MAX_WARP_EDGE)
-
     dst = np.array([[0, 0], [W - 1, 0], [W - 1, H - 1], [0, H - 1]], dtype=np.float32)
     M = cv2.getPerspectiveTransform(quad, dst)
     warped = cv2.warpPerspective(img_bgr, M, (W, H), flags=cv2.INTER_LINEAR)
-
     if FORCE_LANDSCAPE and warped.shape[0] > warped.shape[1]:
         warped = cv2.rotate(warped, cv2.ROTATE_90_CLOCKWISE)
-
     return warped
 
 
 # =========================
-# Detection parsing + association
+# Detection
 # =========================
 @dataclass
 class Det:
@@ -191,63 +186,167 @@ def parse_ultralytics_result(res) -> List[Det]:
     return dets
 
 
-def select_best_corner(
-    candidates: List[Det],
-    expected_xy: Tuple[float, float],
-    diag: float,
-) -> Optional[Det]:
-    if not candidates:
-        return None
-    ex, ey = expected_xy
-    best = None
-    best_score = -1e9
-    for d in candidates:
-        cx, cy = xyxy_center(d.xyxy)
-        dist = math.hypot(cx - ex, cy - ey)
-        score = d.conf - DIST_ALPHA * (dist / max(diag, 1e-6))
-        if score > best_score:
-            best_score = score
-            best = d
-    return best
+def predict_dets(
+    model: YOLO,
+    img_bgr: np.ndarray,
+    conf: float,
+    iou: float,
+    classes: Optional[List[int]] = None,
+) -> List[Det]:
+    """Call model.predict safely across ultralytics versions."""
+    try:
+        results = model.predict(
+            source=img_bgr,
+            imgsz=IMGSZ,
+            conf=conf,
+            iou=iou,
+            max_det=MAX_DET,
+            device=DEVICE,
+            classes=classes,
+            verbose=False,
+        )
+        dets = parse_ultralytics_result(results[0])
+        if classes is not None:
+            dets = [d for d in dets if d.cls in set(classes)]
+        return dets
+    except TypeError:
+        # fallback if `classes` not supported
+        results = model.predict(
+            source=img_bgr,
+            imgsz=IMGSZ,
+            conf=conf,
+            iou=iou,
+            max_det=MAX_DET,
+            device=DEVICE,
+            verbose=False,
+        )
+        dets = parse_ultralytics_result(results[0])
+        if classes is not None:
+            dets = [d for d in dets if d.cls in set(classes)]
+        return dets
 
 
-def assign_corners_to_card(card: Det, corners_by_cls: Dict[int, List[Det]], W: int, H: int) -> Optional[Dict[int, Det]]:
-    # expand card bbox for corner search
+# =========================
+# Card postprocess
+# =========================
+def iou_xyxy(a: np.ndarray, b: np.ndarray) -> float:
+    ax1, ay1, ax2, ay2 = map(float, a)
+    bx1, by1, bx2, by2 = map(float, b)
+    ix1 = max(ax1, bx1)
+    iy1 = max(ay1, by1)
+    ix2 = min(ax2, bx2)
+    iy2 = min(ay2, by2)
+    iw = max(0.0, ix2 - ix1)
+    ih = max(0.0, iy2 - iy1)
+    inter = iw * ih
+    if inter <= 0:
+        return 0.0
+    area_a = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
+    area_b = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
+    union = area_a + area_b - inter
+    return float(inter / max(union, 1e-9))
+
+
+def nms_dets(dets: List[Det], thr: float) -> List[Det]:
+    dets = sorted(dets, key=lambda d: d.conf, reverse=True)
+    keep: List[Det] = []
+    for d in dets:
+        ok = True
+        for k in keep:
+            if iou_xyxy(d.xyxy, k.xyxy) > thr:
+                ok = False
+                break
+        if ok:
+            keep.append(d)
+    return keep
+
+
+def filter_small_cards(cards: List[Det], W: int, H: int, min_ratio: float) -> List[Det]:
+    out = []
+    img_area = float(W * H)
+    for c in cards:
+        x1, y1, x2, y2 = map(float, c.xyxy)
+        area = max(0.0, x2 - x1) * max(0.0, y2 - y1)
+        if area >= min_ratio * img_area:
+            out.append(c)
+    return out
+
+
+# =========================
+# Corner association (class-agnostic)
+# =========================
+def assoc_corners_class_agnostic(card: Det, corner_dets: List[Det], W: int, H: int) -> Optional[Dict[str, Det]]:
+    """
+    Choose 4 corner detections around this card, ignoring their cls.
+    Return mapping: {"tl":Det,"tr":Det,"br":Det,"bl":Det}
+    """
     card_exp = expand_xyxy(card.xyxy, CARD_EXPAND_RATIO, CARD_EXPAND_PX, W, H)
     x1, y1, x2, y2 = map(float, card.xyxy)
-    diag = math.hypot(x2 - x1, y2 - y1)
+    diag = math.hypot(x2 - x1, y2 - y1) + 1e-6
 
-    # expected anchors (based on card bbox)
     expected = {
-        1: (x1, y1),  # TL
-        2: (x2, y1),  # TR
-        3: (x2, y2),  # BR
-        4: (x1, y2),  # BL
+        "tl": (x1, y1),
+        "tr": (x2, y1),
+        "br": (x2, y2),
+        "bl": (x1, y2),
     }
+    keys = ["tl", "tr", "br", "bl"]
 
-    chosen: Dict[int, Det] = {}
-    for cid in (1, 2, 3, 4):
-        pool = []
-        for d in corners_by_cls.get(cid, []):
-            if d.conf < CONF_THRES_CORNER:
-                continue
+    # collect candidates near card (by center-in-expanded-bbox) with conf threshold
+    cands: List[Det] = []
+    for d in corner_dets:
+        if d.conf < CORNER_CONF:
+            continue
+        cx, cy = xyxy_center(d.xyxy)
+        if point_in_xyxy(cx, cy, card_exp):
+            cands.append(d)
+
+    if len(cands) < 4:
+        return None
+
+    # for each expected corner, take topK candidates by cost
+    topk_lists: Dict[str, List[Tuple[float, Det]]] = {}
+    for k in keys:
+        ex, ey = expected[k]
+        scored: List[Tuple[float, Det]] = []
+        for d in cands:
             cx, cy = xyxy_center(d.xyxy)
-            if point_in_xyxy(cx, cy, card_exp):
-                pool.append(d)
-        best = select_best_corner(pool, expected[cid], diag)
-        if best is None:
+            dist = math.hypot(cx - ex, cy - ey) / diag
+            cost = dist - GAMMA * d.conf
+            scored.append((cost, d))
+        scored.sort(key=lambda t: t[0])
+        topk_lists[k] = scored[:TOPK_PER_CORNER]
+        if not topk_lists[k]:
             return None
-        chosen[cid] = best
 
-    return chosen
+    # brute-force distinct assignment (<= 6^4)
+    best_cost = 1e9
+    best = None
+    for a_cost, a in topk_lists["tl"]:
+        for b_cost, b in topk_lists["tr"]:
+            if b is a:
+                continue
+            for c_cost, c in topk_lists["br"]:
+                if c is a or c is b:
+                    continue
+                for d_cost, d in topk_lists["bl"]:
+                    if d is a or d is b or d is c:
+                        continue
+                    total = a_cost + b_cost + c_cost + d_cost
+                    if total < best_cost:
+                        best_cost = total
+                        best = {"tl": a, "tr": b, "br": c, "bl": d}
+
+    return best
 
 
 # =========================
 # Debug drawing
 # =========================
-def draw_debug(img_bgr: np.ndarray, cards: List[Det], assigned: List[Optional[Dict[int, Det]]]) -> np.ndarray:
+def draw_debug(img_bgr: np.ndarray, cards: List[Det], corners: List[Det], assigned: List[Optional[Dict[str, Det]]]) -> np.ndarray:
     vis = img_bgr.copy()
 
+    # draw cards
     for i, card in enumerate(cards):
         x1, y1, x2, y2 = card.xyxy
         cv2.rectangle(vis, (int(x1), int(y1)), (int(x2), int(y2)), (0, 0, 255), 2)
@@ -256,23 +355,23 @@ def draw_debug(img_bgr: np.ndarray, cards: List[Det], assigned: List[Optional[Di
 
         sel = assigned[i]
         if not sel:
-            cv2.putText(vis, "corners: MISSING", (int(x1), int(y2) + 20),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+            cv2.putText(vis, "corners: MISSING", (int(x1), int(y2) + 24),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
             continue
 
-        # draw corner boxes and centers
+        # selected corners (show predicted cls to observe confusion)
         pts = []
-        for cid, name in zip((1, 2, 3, 4), ("TL", "TR", "BR", "BL")):
-            d = sel[cid]
+        for key, name in [("tl", "TL"), ("tr", "TR"), ("br", "BR"), ("bl", "BL")]:
+            d = sel[key]
             cx, cy = xyxy_center(d.xyxy)
             pts.append((cx, cy))
             xx1, yy1, xx2, yy2 = d.xyxy
             cv2.rectangle(vis, (int(xx1), int(yy1)), (int(xx2), int(yy2)), (255, 0, 255), 2)
             cv2.circle(vis, (int(cx), int(cy)), 5, (0, 255, 255), -1)
-            cv2.putText(vis, f"{name} {d.conf:.2f}", (int(xx1), max(0, int(yy1) - 6)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 255), 2)
+            pred_name = NAMES[d.cls] if 0 <= d.cls < len(NAMES) else str(d.cls)
+            cv2.putText(vis, f"{name}<-{pred_name} {d.conf:.2f}", (int(xx1), max(0, int(yy1) - 6)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 0, 255), 2)
 
-        # draw quad
         quad = np.array(pts, dtype=np.float32).reshape(4, 2)
         cv2.polylines(vis, [quad.astype(np.int32)], isClosed=True, color=(0, 255, 0), thickness=2)
 
@@ -285,6 +384,7 @@ def draw_debug(img_bgr: np.ndarray, cards: List[Det], assigned: List[Optional[Di
 def main():
     if not MODEL_WEIGHTS.exists():
         raise FileNotFoundError(f"MODEL_WEIGHTS not found: {MODEL_WEIGHTS}")
+
     imgs = iter_images(SOURCE)
     if not imgs:
         raise FileNotFoundError(f"No images found in: {SOURCE}")
@@ -303,42 +403,32 @@ def main():
         img = imread_bgr(img_path)
         H, W = img.shape[:2]
 
-        # predict on numpy image (unicode path safe)
-        results = model.predict(
-            source=img,
-            imgsz=IMGSZ,
-            conf=min(CONF_THRES_CARD, CONF_THRES_CORNER),
-            iou=IOU_NMS,
-            max_det=MAX_DET,
-            device=DEVICE,
-            verbose=False,
-        )
-        res = results[0]
-        dets = parse_ultralytics_result(res)
-
-        # split by class
-        cards = [d for d in dets if d.cls == 0 and d.conf >= CONF_THRES_CARD]
-        corners_by_cls: Dict[int, List[Det]] = {1: [], 2: [], 3: [], 4: []}
-        for d in dets:
-            if d.cls in (1, 2, 3, 4):
-                corners_by_cls[d.cls].append(d)
-
-        # sort cards by conf (high first)
+        # ---- Pass A: cards only ----
+        cards = predict_dets(model, img, conf=CARD_CONF, iou=CARD_IOU, classes=[0])
+        cards = [c for c in cards if c.cls == 0 and c.conf >= CARD_CONF]
+        cards = filter_small_cards(cards, W, H, CARD_MIN_AREA_RATIO)
+        cards = nms_dets(cards, CARD_NMS_IOU)
         cards.sort(key=lambda d: d.conf, reverse=True)
 
-        assigned_all: List[Optional[Dict[int, Det]]] = []
+        # ---- Pass B: corners only ----
+        corner_dets = predict_dets(model, img, conf=CORNER_CONF, iou=CORNER_IOU, classes=[1, 2, 3, 4])
+        corner_dets = [d for d in corner_dets if d.cls in (1, 2, 3, 4) and d.conf >= CORNER_CONF]
 
-        saved_any = False
+        assigned_all: List[Optional[Dict[str, Det]]] = []
         meta_out = {
             "image": str(img_path),
             "image_size": [W, H],
             "model": str(MODEL_WEIGHTS),
+            "passA": {"card_conf": CARD_CONF, "card_iou": CARD_IOU, "card_nms_iou": CARD_NMS_IOU},
+            "passB": {"corner_conf": CORNER_CONF, "corner_iou": CORNER_IOU},
             "cards": [],
         }
 
+        ok_count = 0
         for i, card in enumerate(cards):
-            sel = assign_corners_to_card(card, corners_by_cls, W, H)
+            sel = assoc_corners_class_agnostic(card, corner_dets, W, H)
             assigned_all.append(sel)
+
             if sel is None:
                 meta_out["cards"].append({
                     "index": i,
@@ -347,11 +437,10 @@ def main():
                 })
                 continue
 
-            # corner points = centers of corner bboxes (semantic order)
-            tl = xyxy_center(sel[1].xyxy)
-            tr = xyxy_center(sel[2].xyxy)
-            br = xyxy_center(sel[3].xyxy)
-            bl = xyxy_center(sel[4].xyxy)
+            tl = xyxy_center(sel["tl"].xyxy)
+            tr = xyxy_center(sel["tr"].xyxy)
+            br = xyxy_center(sel["br"].xyxy)
+            bl = xyxy_center(sel["bl"].xyxy)
             quad = np.array([tl, tr, br, bl], dtype=np.float32)
 
             warped = warp_from_quad(img, quad)
@@ -360,42 +449,43 @@ def main():
                     "index": i,
                     "status": "warp_failed",
                     "card": {"xyxy": card.xyxy.tolist(), "conf": card.conf},
-                    "quad": quad.tolist(),
+                    "quad_points": quad.tolist(),
                 })
                 continue
 
             out_img = out_warps / f"{img_path.stem}_card{i:02d}.jpg"
             imwrite(out_img, warped)
-            saved_any = True
+            ok_count += 1
 
             meta_out["cards"].append({
                 "index": i,
                 "status": "ok",
                 "card": {"xyxy": card.xyxy.tolist(), "conf": card.conf},
-                "corners": {
-                    "tl": {"xyxy": sel[1].xyxy.tolist(), "conf": sel[1].conf},
-                    "tr": {"xyxy": sel[2].xyxy.tolist(), "conf": sel[2].conf},
-                    "br": {"xyxy": sel[3].xyxy.tolist(), "conf": sel[3].conf},
-                    "bl": {"xyxy": sel[4].xyxy.tolist(), "conf": sel[4].conf},
+                "selected_corners": {
+                    "tl": {"cls": int(sel["tl"].cls), "conf": float(sel["tl"].conf), "xyxy": sel["tl"].xyxy.tolist()},
+                    "tr": {"cls": int(sel["tr"].cls), "conf": float(sel["tr"].conf), "xyxy": sel["tr"].xyxy.tolist()},
+                    "br": {"cls": int(sel["br"].cls), "conf": float(sel["br"].conf), "xyxy": sel["br"].xyxy.tolist()},
+                    "bl": {"cls": int(sel["bl"].cls), "conf": float(sel["bl"].conf), "xyxy": sel["bl"].xyxy.tolist()},
                 },
                 "quad_points": quad.tolist(),
                 "warp_size": [int(warped.shape[1]), int(warped.shape[0])],
                 "warp_path": str(out_img),
             })
 
-        # save json even if none saved (for debugging)
+        # save json
         (out_json / f"{img_path.stem}.json").write_text(
             json.dumps(meta_out, ensure_ascii=False, indent=2),
             encoding="utf-8"
         )
 
+        # debug vis
         if SAVE_DEBUG_VIS:
-            dbg = draw_debug(img, cards, assigned_all)
+            dbg = draw_debug(img, cards, corner_dets, assigned_all)
             imwrite(out_dbg / f"{img_path.stem}.jpg", dbg)
 
-        print(f"[OK] {img_path.name} -> cards={len(cards)} saved_warps={sum(1 for c in meta_out['cards'] if c.get('status')=='ok')}")
+        print(f"[OK] {img_path.name} cards={len(cards)} warp_ok={ok_count} corners_total={len(corner_dets)}")
 
-    print(f"\nDone. Outputs:")
+    print("\nDone.")
     print(f"  warps    : {out_warps.resolve()}")
     print(f"  json     : {out_json.resolve()}")
     if SAVE_DEBUG_VIS:

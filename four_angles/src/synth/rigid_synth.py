@@ -64,10 +64,16 @@ class SynthConfig:
     angle_min: float = 0.0
     angle_max: float = 360.0
 
+    # ========= Corner box =========
     # corner bbox side length = corner_box_ratio * min(card_w, card_h), clipped to [min,max]
-    corner_box_ratio: float = 0.18
-    corner_box_min: int = 40
-    corner_box_max: int = 120
+    # (建议：为了提高 corner recall，把角点框做大一些，让框内包含更多名片内部纹理/文字)
+    corner_box_ratio: float = 0.30
+    corner_box_min: int = 96
+    corner_box_max: int = 180
+
+    # 严格保证“顶点在角点框正中心”
+    # True: 若角点框会出界，则直接放弃该次摆放（不 clamp），保证语义一致性
+    strict_corner_center: bool = True
 
     # placement attempts
     max_place_trials_per_card: int = 140
@@ -153,10 +159,23 @@ def yolo_line(
     return f"{class_id} {cx/img_w:.6f} {cy/img_h:.6f} {bw/img_w:.6f} {bh/img_h:.6f}"
 
 
-def corner_square_bbox(pt_xy: np.ndarray, side: int, img_w: int, img_h: int) -> Tuple[float, float, float, float]:
+def corner_square_bbox_centered(
+    pt_xy: np.ndarray, side: int, img_w: int, img_h: int, strict: bool
+) -> Optional[Tuple[float, float, float, float]]:
+    """
+    以 pt 为中心的正方形 bbox。
+    strict=True：若 bbox 会出界，返回 None（保证 pt 永远是 bbox 的中心，避免 clamp 导致中心偏移）
+    strict=False：出界则 clamp（不建议用于“顶点=中心”的语义任务）
+    """
     x, y = float(pt_xy[0]), float(pt_xy[1])
     half = side / 2.0
     xmin, ymin, xmax, ymax = x - half, y - half, x + half, y + half
+
+    if strict:
+        if xmin < 0 or ymin < 0 or xmax > (img_w - 1) or ymax > (img_h - 1):
+            return None
+        return xmin, ymin, xmax, ymax
+
     return clamp_bbox_xyxy(xmin, ymin, xmax, ymax, img_w, img_h)
 
 
@@ -382,11 +401,17 @@ def synth_one_image(
             Wc, Hc = card_item.W, card_item.H
             side = card_item.corner_side
 
+            # 为了严格保证“顶点=角点框中心”，角点框必须完全落在图内
+            # 所以要把“边界安全距离”提升到 max(margin_to_img, side/2)
+            safe_margin = cfg.margin_to_img
+            if cfg.strict_corner_center:
+                safe_margin = max(safe_margin, int(math.ceil(side / 2.0)) + 2)
+
             radius = 0.5 * math.sqrt(float(Wc * Wc + Hc * Hc))
-            x_min = cfg.margin_to_img + radius
-            x_max = img_w - cfg.margin_to_img - radius
-            y_min = cfg.margin_to_img + radius
-            y_max = img_h - cfg.margin_to_img - radius
+            x_min = safe_margin + radius
+            x_max = img_w - safe_margin - radius
+            y_min = safe_margin + radius
+            y_max = img_h - safe_margin - radius
             if x_max <= x_min or y_max <= y_min:
                 continue
 
@@ -397,7 +422,7 @@ def synth_one_image(
             M = build_affine_rotation_translation(Wc, Hc, angle, (cx, cy))
             quad = affine_transform_points(M, card_corners(Wc, Hc))  # TL,TR,BR,BL
 
-            if not corners_within_margin(quad, img_w, img_h, cfg.margin_to_img):
+            if not corners_within_margin(quad, img_w, img_h, safe_margin):
                 continue
 
             xmin, ymin, xmax, ymax = bbox_from_points(quad)
@@ -442,19 +467,31 @@ def synth_one_image(
 
             placed_boxes_expanded.append(exp_bbox)
 
+            # card bbox label
             xmin_c, ymin_c, xmax_c, ymax_c = clamp_bbox_xyxy(xmin, ymin, xmax, ymax, img_w, img_h)
             l0 = yolo_line(0, xmin_c, ymin_c, xmax_c, ymax_c, img_w, img_h)
             if l0:
                 labels.append(l0)
 
-            corner_ids = [1, 2, 3, 4]
+            # corner labels (strict centered)
+            corner_ids = [1, 2, 3, 4]  # TL TR BR BL
             corners_for_debug: List[Tuple[int, Tuple[float, float, float, float]]] = []
+
+            ok_corners = True
             for pt, cid in zip(quad, corner_ids):
-                cxmin, cymin, cxmax, cymax = corner_square_bbox(pt, side, img_w, img_h)
+                bbox = corner_square_bbox_centered(pt, side, img_w, img_h, strict=cfg.strict_corner_center)
+                if bbox is None:
+                    ok_corners = False
+                    break
+                cxmin, cymin, cxmax, cymax = bbox
                 l = yolo_line(cid, cxmin, cymin, cxmax, cymax, img_w, img_h)
                 if l:
                     labels.append(l)
                     corners_for_debug.append((cid, (cxmin, cymin, cxmax, cymax)))
+
+            # 只要出现任何一个角点框会出界（strict=True），就放弃这次摆放（保证语义一致）
+            if cfg.strict_corner_center and (not ok_corners):
+                continue
 
             quads_dbg.append(quad)
             card_bboxes_dbg.append((xmin_c, ymin_c, xmax_c, ymax_c))
@@ -544,6 +581,7 @@ def generate_dataset(cfg: SynthConfig, overwrite: bool = True) -> None:
     print(f"  fixed_w  : {cfg.fixed_card_w}")
     print(f"  margin   : {cfg.margin_to_img}")
     print(f"  min_gap  : {cfg.min_gap_between_cards}")
+    print(f"  corner   : ratio={cfg.corner_box_ratio} min={cfg.corner_box_min} max={cfg.corner_box_max} strict_center={cfg.strict_corner_center}")
     print(f"  workers  : {cfg.num_workers}")
     print(f"  debug    : {cfg.save_debug}")
 

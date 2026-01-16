@@ -78,21 +78,21 @@ SYNTH_TEMPLATE = dict(
     out_h=None,
     min_cards=2,
     max_cards=4,
-    margin_to_img=90,
-    min_gap_between_cards=40,
+    margin_to_img=150,
+    min_gap_between_cards=60,
     fixed_card_w=700,
     angle_min=0.0,
     angle_max=360.0,
-    corner_box_ratio=0.18,
-    corner_box_min=40,
-    corner_box_max=120,
+    corner_box_ratio=0.40,
+    corner_box_min=120,
+    corner_box_max=220,
     max_place_trials_per_card=140,
     max_image_retries=40,
 )
 
 # Ultralytics output dir control
 ULTRA_PROJECT = str(Path("four_angles") / "runs")
-ULTRA_NAME = "step3_detect_routeA"
+ULTRA_NAME = "step3_detect"
 ULTRA_EXIST_OK = True
 
 
@@ -340,7 +340,7 @@ def build_mixed_train_loader(trainer) -> None:
             out_dir=runtime_epoch_dir,
             num_images=dyn_images,
             save_debug=False,  # training: don't write debug_vis
-            num_workers=1,     # callback: stable; tune later if needed
+            num_workers=4,     # callback: stable; tune later if needed
             seed=epoch_seed,
             **SYNTH_TEMPLATE,
         )

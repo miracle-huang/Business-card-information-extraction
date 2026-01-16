@@ -37,11 +37,11 @@ class SplitConfig:
 
 
 CONFIG = SplitConfig(
-    src_dir=Path(r"four_angles/assets/step1_out"),
+    src_dir=Path(r"four_angles/assets/step1_output"),
     out_dir=Path(r"four_angles/assets/step2_out_dataset_yolo"),
     split_mode="count",
-    train_count=40,
-    val_count=20,
+    train_count=800,
+    val_count=200,
     drop_excess=True,
     seed=42,
     mode="copy",
