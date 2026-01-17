@@ -20,9 +20,9 @@ CONFIG = SynthConfig(
     # 你自己改成真实路径（也可用相对路径）
     bg_dir=Path(r"data/background"),
     card_dir=Path(r"data/business_card_raw"),
-    out_dir=Path(r"segmentation_classification/assets/seg_step1_output"),
+    out_dir=Path(r"segmentation_classification/assets/seg_step1_test"),
 
-    num_images=500,
+    num_images=50,
 
     min_cards=2,
     max_cards=4,

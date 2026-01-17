@@ -37,15 +37,15 @@ class SplitConfig:
 # CONFIG: edit here (NO CLI args)
 # =========================
 CONFIG = SplitConfig(
-    src_dir=Path(r"segmentation_classification/assets/seg_step1_output"),   # <- 改成你的Step1输出
-    out_dir=Path(r"segmentation_classification/assets/seg_step2_yolo_dataset"),  # <- 改成你希望的输出
+    src_dir=Path(r"segmentation_classification/assets/seg_step1_test"),   # <- 改成你的Step1输出
+    out_dir=Path(r"segmentation_classification/assets/seg_step2_test_yolo_dataset"),  # <- 改成你希望的输出
 
     # split_mode="ratio",
     # train_ratio=0.8,
 
     split_mode="count",
-    train_count=400,
-    val_count=100,
+    train_count=40,
+    val_count=10,
     drop_excess=True,
 
     seed=42,
