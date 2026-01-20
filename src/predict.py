@@ -33,7 +33,7 @@ if __name__ == "__main__":
     main(
         model="runs_local/debug_yolo11l_bs4_img640/weights/best.pt",
         # source="data/roboflow_v1/test/images",
-        source="data/business_card_v2/test/images",
+        source="segmentation_classification/outputs/step5_v5/upright",
         device="0",        # 或 "cpu"
         save=True,
     )

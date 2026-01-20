@@ -147,8 +147,8 @@ if __name__ == "__main__":
     # 改成你自己的路径即可，然后直接：python src/predict_ocr.py
     cfg = PredictOCRConfig(
         weights="runs_local/debug_yolo11l_bs4_img640/weights/best.pt",
-        input_path="data/business_card_v2/test/images",
-        out_dir="runs_local/ocr_test",
+        input_path="segmentation_classification/outputs/step5_v5/upright",
+        out_dir="runs_local/final_result_test",
 
         imgsz=960,
         conf=0.25,
