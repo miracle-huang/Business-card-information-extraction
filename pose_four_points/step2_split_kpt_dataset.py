@@ -1,3 +1,10 @@
+"""
+[Step 2] 数据校验与切分脚本
+功能：
+1. 扫描 Pool 文件夹中的所有合成图像和标签。
+2. 校验标签格式是否符合 YOLO-Pose 要求（例如：17个字段，坐标在0-1之间）。
+3. 随机打乱并按比例切分为 train 和 val 集合，生成标准的 YOLO 训练目录结构。
+"""
 from __future__ import annotations
 
 import random
@@ -6,25 +13,24 @@ import sys
 from pathlib import Path
 from typing import List, Tuple
 
-
-# =========================
-# ✅ ensure project root on sys.path (optional but consistent)
-# =========================
-ROOT = Path(__file__).resolve().parents[2]  # script/obb -> script -> project root
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+# ✅ ensure current dir on sys.path
+CUR_DIR = Path(__file__).resolve().parent
+if str(CUR_DIR) not in sys.path:
+    sys.path.insert(0, str(CUR_DIR))
 
 
 # =========================
 # ✅ 配置区：只改这里
 # =========================
 SEED = 42
-VAL_RATIO = 0.2  # 例如 0.2 => 80% train / 20% val
-VAL_NUM = 20   # 直接指定验证集数量, 优先级高于 VAL_RATIO, None 则不指定
-CLEAR_OUT_DIR = True  # True 会清空输出目录再重新生成
+VAL_RATIO = 0.2        # 例如 0.2 => 80% train / 20% val
+VAL_NUM = 100          # 直接指定验证集数量, 优先级高于 VAL_RATIO, None 则不指定
+CLEAR_OUT_DIR = True   # True 会清空输出目录再重新生成
 
-SRC_POOL_DIR = Path(r"data\synth_kpt_pool")     # 步骤1输出
-DST_STATIC_DIR = Path(r"data\synth_kpt_static") # 步骤2输出
+# 路径配置
+SRC_POOL_DIR = CUR_DIR / "assets" / "step1_outputs"        # 步骤1输出目录
+DST_STATIC_DIR = CUR_DIR / "assets" / "step2_train_dataset"  # 步骤2输出目录 (用于训练)
+YAML_OUT_PATH = DST_STATIC_DIR / "dataset_card4kpt.yaml"     # 自动生成的配置文件路径 (存放在数据集目录下)
 
 
 # =========================
@@ -189,6 +195,22 @@ def main() -> None:
     if val_pairs:
         copy_pairs(val_pairs, dst_img_val, dst_lbl_val)
 
+    # --- 新增：自动生成 YOLO 训练所需的 YAML 配置文件 ---
+    yaml_content = f"""# 自动生成的关键点训练配置文件
+path: {DST_STATIC_DIR.absolute().as_posix()} # 数据集根目录（绝对路径）
+train: images/train
+val: images/val
+
+# 类别信息
+nc: 1
+names: ['card']
+
+# 关键点信息：4个角点，维度为3 (x, y, visible)
+kpt_shape: [4, 3]
+"""
+    YAML_OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    YAML_OUT_PATH.write_text(yaml_content, encoding="utf-8")
+    
     # report
     print("\n[split_kpt_dataset] DONE")
     print(f"  SRC pool images: {len(img_paths)}")
@@ -202,7 +224,8 @@ def main() -> None:
     print(f"  Valid pairs used: {n}")
     print(f"  Train: {len(train_pairs)}")
     print(f"  Val:   {len(val_pairs)}")
-    print(f"  Output dir: {DST_STATIC_DIR}\n")
+    print(f"  Output dir: {DST_STATIC_DIR}")
+    print(f"  Config saved to: {YAML_OUT_PATH}\n")
 
 
 if __name__ == "__main__":

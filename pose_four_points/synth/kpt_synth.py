@@ -348,15 +348,63 @@ def _compose_one(
     return canvas, label_lines, placed_quads
 
 
-def generate_dataset(cfg: SynthKptConfig, seed: int = 42) -> None:
+
+def _worker_task(args: Tuple[int, int, SynthKptConfig, List[Path], List[Path]]) -> None:
+    idx, seed, cfg, bg_paths, card_paths = args
     rng = random.Random(seed)
+
+    # choose background and fit to fixed size
+    bg_path = rng.choice(bg_paths)
+    bg = imread_any(bg_path)
+    if bg.ndim == 2:
+        bg = cv2.cvtColor(bg, cv2.COLOR_GRAY2BGR)
+    if bg.ndim == 3 and bg.shape[2] == 4:
+        bg = bg[:, :, :3]
+
+    bg = _fit_background_to_size(bg, cfg.out_w, cfg.out_h)
+
+    # create one sample with retries
+    ok = False
+    last_err = None
+    for _ in range(cfg.max_restarts_per_image):
+        try:
+            composed, label_lines, quads = _compose_one(bg, card_paths, cfg, rng)
+            if not (cfg.min_cards <= len(label_lines) <= cfg.max_cards):
+                raise RuntimeError(f"Generated object count out of range: {len(label_lines)}")
+            ok = True
+            break
+        except Exception as e:
+            last_err = e
+            continue
+
+    if not ok:
+        # Instead of raising, we could just log and skip, but keeping original behavior
+        raise RuntimeError(f"Failed to generate image {idx} after retries. Last error: {last_err}")
+
+    stem = f"img_{idx+1:06d}"
+    out_img_dir = cfg.out_dir / "images"
+    out_lbl_dir = cfg.out_dir / "labels"
+    out_viz_dir = cfg.out_dir / "viz"
+
+    img_out = out_img_dir / f"{stem}.jpg"
+    lbl_out = out_lbl_dir / f"{stem}.txt"
+
+    imwrite_jpg(img_out, composed, quality=95)
+    lbl_out.write_text("\n".join(label_lines) + "\n", encoding="utf-8")
+
+    if cfg.save_viz:
+        viz = _draw_viz(composed, quads)
+        imwrite_jpg(out_viz_dir / f"{stem}.jpg", viz, quality=95)
+
+def generate_dataset(cfg: SynthKptConfig, seed: int = 42, num_workers: int = 4) -> None:
+    from concurrent.futures import ProcessPoolExecutor
+    from tqdm import tqdm
 
     bg_paths = list_images(cfg.bg_dir)
     card_paths = list_images(cfg.card_dir)
-    if not bg_paths:
-        raise RuntimeError(f"No backgrounds found in: {cfg.bg_dir}")
-    if not card_paths:
-        raise RuntimeError(f"No business cards found in: {cfg.card_dir}")
+    # Pre-generate seeds to ensure reproducibility with multiprocessing
+    rng = random.Random(seed)
+    seeds = [rng.randint(0, 1000000) for _ in range(cfg.num_images)]
 
     out_img_dir = cfg.out_dir / "images"
     out_lbl_dir = cfg.out_dir / "labels"
@@ -367,45 +415,15 @@ def generate_dataset(cfg: SynthKptConfig, seed: int = 42) -> None:
     if cfg.save_viz:
         out_viz_dir.mkdir(parents=True, exist_ok=True)
 
-    for idx in range(cfg.num_images):
-        # choose background and fit to fixed size
-        bg_path = rng.choice(bg_paths)
-        bg = imread_any(bg_path)
-        if bg.ndim == 2:
-            bg = cv2.cvtColor(bg, cv2.COLOR_GRAY2BGR)
-        if bg.ndim == 3 and bg.shape[2] == 4:
-            bg = bg[:, :, :3]
+    worker_args = [
+        (i, seeds[i], cfg, bg_paths, card_paths)
+        for i in range(cfg.num_images)
+    ]
 
-        bg = _fit_background_to_size(bg, cfg.out_w, cfg.out_h)
+    print(f"[kpt_synth] Starting generation of {cfg.num_images} images with {num_workers} workers...")
+    
+    with ProcessPoolExecutor(max_workers=num_workers) as executor:
+        # Use tqdm to show progress
+        list(tqdm(executor.map(_worker_task, worker_args), total=cfg.num_images))
 
-        # create one sample with retries (because non-overlap with 2~4 cards is rejection-sampling)
-        ok = False
-        last_err = None
-        for _ in range(cfg.max_restarts_per_image):
-            try:
-                composed, label_lines, quads = _compose_one(bg, card_paths, cfg, rng)
-                # must have 2~4 objects
-                if not (cfg.min_cards <= len(label_lines) <= cfg.max_cards):
-                    raise RuntimeError(f"Generated object count out of range: {len(label_lines)}")
-                ok = True
-                break
-            except Exception as e:
-                last_err = e
-                continue
-
-        if not ok:
-            raise RuntimeError(f"Failed to generate image {idx} after retries. Last error: {last_err}")
-
-        stem = f"img_{idx+1:06d}"
-        img_out = out_img_dir / f"{stem}.jpg"
-        lbl_out = out_lbl_dir / f"{stem}.txt"
-
-        imwrite_jpg(img_out, composed, quality=95)
-        lbl_out.write_text("\n".join(label_lines) + "\n", encoding="utf-8")
-
-        if cfg.save_viz:
-            viz = _draw_viz(composed, quads)
-            imwrite_jpg(out_viz_dir / f"{stem}.jpg", viz, quality=95)
-
-        if (idx + 1) % 50 == 0:
-            print(f"[kpt_synth] generated {idx+1}/{cfg.num_images} -> {cfg.out_dir}")
+    print(f"[kpt_synth] Done. Results saved to {cfg.out_dir}")

@@ -1,3 +1,11 @@
+"""
+[Inference] 模型推理与透视矫正脚本
+功能：
+1. 加载训练好的 YOLO-Pose 模型。
+2. 对图片中的名片进行检测，并提取四个角点（Keypoints）。
+3. 使用 Open CV 的 Perspective Warp 将每个检测到的名片“拉直”。
+4. 输出：裁剪并矫正后的名片图（Crops）以及对应的 JSON 元数据。
+"""
 from __future__ import annotations
 
 import json
@@ -10,15 +18,12 @@ import cv2
 import numpy as np
 from ultralytics import YOLO
 
+# ✅ ensure current dir on sys.path
+CUR_DIR = Path(__file__).resolve().parent
+if str(CUR_DIR) not in sys.path:
+    sys.path.insert(0, str(CUR_DIR))
+
 IMG_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
-
-
-# =========================
-# ✅ ensure project root on sys.path
-# =========================
-ROOT = Path(__file__).resolve().parents[2]  # script/obb -> script -> project root
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 
 # =========================
@@ -162,19 +167,21 @@ def draw_viz(img_bgr: np.ndarray, quads: List[np.ndarray], confs: List[float]) -
 @dataclass
 class PredictWarpConfig:
     # model
-    model_path: Path = Path(r"runs_kpt/kpt_hybrid_no_aug/weights/best.pt")  # ←改成你的 best.pt 真实路径
+    # 指向 step3 训练产出的 best.pt
+    model_path: Path = CUR_DIR / "run" / "kpt_hybrid_no_aug" / "weights" / "best.pt"
     device: str = "0"  # "cpu" or "0"
-    imgsz: int = 640
+    imgsz: int = 640 # 这里要保持和训练
 
     # input/output
-    input_dir: Path = Path(r"data/test_images_obb/images")  # ←改成你的待处理图片文件夹
-    out_dir: Path = Path(r"outputs/kpt_warp")
+    # 默认处理 step1 生成的测试图，或者你可以改成你自己的待处理图片文件夹
+    input_dir: Path = CUR_DIR / "assets" / "step1_test" / "images"
+    out_dir: Path = CUR_DIR / "outputs" / "step4_result"
 
     # thresholds
     conf: float = 0.25
     iou: float = 0.5
-    kpt_conf: float = 0.30          # 每个关键点最低置信度（无 conf 时跳过此过滤）
-    min_quad_area: float = 2000.0   # 最小四边形面积（像素^2），防止极小误检
+    kpt_conf: float = 0.30          # 每个关键点最低置信度
+    min_quad_area: float = 2000.0   # 最小四边形面积，防止极小误检
 
     # output options
     save_viz: bool = True

@@ -22,8 +22,8 @@ try:
 except Exception:
     DEFAULT_CFG_DICT = None
 
-from src.hybrid_train.hybrid_yolo_dataset import HybridYoloDataset
-from src.synth.kpt_synth import SynthKptConfig, generate_dataset
+from hybrid_train.hybrid_yolo_dataset import HybridYoloDataset
+from synth.kpt_synth import SynthKptConfig, generate_dataset
 
 
 def _safe_rmtree(p: Path, retry: int = 5, sleep: float = 0.2) -> None:
@@ -105,7 +105,7 @@ class HybridPoseTrainer(PoseTrainer):
             seed = int(self.RUNTIME_SEED + epoch)
 
             LOGGER.info(f"[HybridPoseTrainer] Regen runtime dataset: n={runtime_n}, seed={seed}, dir={out_dir}")
-            generate_dataset(cfg_epoch, seed=seed)
+            generate_dataset(cfg_epoch, seed=seed, num_workers=6)
 
         runtime_img_dir = self.RUNTIME_DIR / "images"
         if not runtime_img_dir.exists():

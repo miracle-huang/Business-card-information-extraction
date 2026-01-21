@@ -1,28 +1,35 @@
-# script/obb/train_kpt_hybrid.py
+"""
+[Step 3] 混合训练脚本 (Hybrid Training)
+功能：启动基于 YOLO-Pose 的关键点检测模型训练。
+特点：
+1. 加载由 Step 1 & 2 准备好的静态数据集。
+2. 每一个 Epoch 训练开始前，动态合成一批新的图片并注入训练流。
+3. 关闭所有默认的 YOLO 几何增强，完全依靠算法合成。
+"""
 from __future__ import annotations
 
 import sys
 from pathlib import Path
 
-# ✅ ensure project root on sys.path, fix: ModuleNotFoundError: No module named 'src'
-ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+# ✅ ensure current dir on sys.path
+CUR_DIR = Path(__file__).resolve().parent
+if str(CUR_DIR) not in sys.path:
+    sys.path.insert(0, str(CUR_DIR))
 
 from ultralytics import YOLO
 
-from src.synth.kpt_synth import SynthKptConfig
-from src.hybrid_train.hybrid_pose_trainer import HybridPoseTrainer
+from synth.kpt_synth import SynthKptConfig
+from hybrid_train.hybrid_pose_trainer import HybridPoseTrainer
 
 
 # =========================
 # 你只需要改这里的参数（不走命令行）
 # =========================
 # Step2 输出（静态数据集）
-DATA_YAML = r"configs\dataset_card4kpt.yaml"
+DATA_YAML = str(CUR_DIR / "assets" / "step2_train_dataset" / "dataset_card4kpt.yaml")
 
 # 训练输出目录
-PROJECT_DIR = r"runs_kpt"
+PROJECT_DIR = str(CUR_DIR / "run")
 EXP_NAME = r"kpt_hybrid_no_aug"
 
 # 模型（pose）
@@ -31,14 +38,14 @@ MODEL_WEIGHTS = r"yolo11m-pose.pt"  # 如果你是 YOLOv8，用 yolov8n-pose.pt
 # 训练超参
 EPOCHS = 50
 IMGSZ = 640
-BATCH = 16
+BATCH = 8
 DEVICE = "0"        # "cpu" / "0" / "0,1"
 WORKERS = 0         # ✅ 强烈建议 Windows 下先用 0，避免多进程文件占用
 
 # 动态生成数据（步骤1同源）
 BG_DIR = Path(r"data\background")
 CARD_DIR = Path(r"data\business_card_raw")
-RUNTIME_DIR = Path(r"data\synth_kpt_runtime")
+RUNTIME_DIR = Path(r"pose_four_points\assets\synth_kpt_runtime")
 
 # 动态数据规模：每个 epoch 动态生成 = static_train_len * MULTIPLIER
 RUNTIME_MULTIPLIER = 1.0
