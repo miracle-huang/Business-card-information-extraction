@@ -50,7 +50,9 @@ def train(cfg: TrainConfig) -> None:
 
 def parse_args():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--config", type=str, default="src/config/default.yaml")
+    # 动态获取默认配置文件的绝对路径
+    default_config = Path(__file__).parent / "config" / "default.yaml"
+    ap.add_argument("--config", type=str, default=str(default_config))
     return ap.parse_args()
 
 
