@@ -1,16 +1,15 @@
-# ===== Core =====
+# ===== Core Frameworks =====
 ultralytics>=8.3.0
+torch
+torchvision
 
-# ===== Image & Data =====
+# ===== OCR Engines =====
+easyocr
+
+# ===== Image Processing & Data =====
 opencv-python
 numpy
 pillow
-pyyaml
 
-# ===== OCR (PaddleOCR) =====
-paddleocr>=2.7.0
-paddlepaddle>=2.6.0
-
-# ===== Utils =====
+# ===== Utilities =====
 tqdm
-matplotlib
