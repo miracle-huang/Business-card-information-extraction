@@ -22,7 +22,7 @@ CONFIG = SynthConfig(
     card_dir=Path(r"data/business_card_raw"),
     out_dir=Path(r"segmentation_classification/assets/seg_step1_test"),
 
-    num_images=20,
+    num_images=30,
 
     min_cards=2,
     max_cards=4,
@@ -54,7 +54,7 @@ CONFIG = SynthConfig(
 
     save_debug=True,
     num_workers=6,
-    seed=1,
+    seed=1234,
 )
 
 

@@ -168,7 +168,7 @@ def draw_viz(img_bgr: np.ndarray, quads: List[np.ndarray], confs: List[float]) -
 class PredictWarpConfig:
     # model
     # 指向 step3 训练产出的 best.pt
-    model_path: Path = CUR_DIR / "run" / "kpt_hybrid_no_aug" / "weights" / "best.pt"
+    model_path: Path = CUR_DIR / "runs" / "kpt_hybrid_no_aug" / "weights" / "best.pt"
     device: str = "0"  # "cpu" or "0"
     imgsz: int = 640 # 这里要保持和训练
 

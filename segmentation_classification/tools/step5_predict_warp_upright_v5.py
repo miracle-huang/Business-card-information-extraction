@@ -563,9 +563,9 @@ def build_config() -> Step5Config:
     cfg = Step5Config()
 
     cfg.source = r"segmentation_classification/assets/seg_step1_test/images"
-    cfg.seg_weights = r"segmentation_classification/runs/step3_seg/weights/best.pt"
-    cfg.cls_weights = r"segmentation_classification/runs/step4_upright_cls/weights/best.pt"
-    cfg.out_dir = r"segmentation_classification/outputs/step5_v5"
+    cfg.seg_weights = r"weights/segmentation_classification/step3_seg_yolo11x_bs32_epoch50/weights/best.pt"
+    cfg.cls_weights = r"weights/segmentation_classification/step4_upright_cls_yolo11x_bs16_epoch50/weights/best.pt"
+    cfg.out_dir = r"segmentation_classification/outputs/step5_colab"
 
     # tuning defaults
     cfg.crop_erode_px = 3
