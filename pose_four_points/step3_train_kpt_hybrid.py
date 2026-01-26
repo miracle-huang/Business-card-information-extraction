@@ -30,7 +30,7 @@ DATA_YAML = str(CUR_DIR / "assets" / "step2_train_dataset" / "dataset_card4kpt.y
 
 # 训练输出目录
 PROJECT_DIR = str(CUR_DIR / "run")
-EXP_NAME = r"kpt_hybrid_no_aug"
+EXP_NAME = r"kpt_hybrid_no_aug_testworkers"
 
 # 模型（pose）
 MODEL_WEIGHTS = r"yolo11m-pose.pt"  # 如果你是 YOLOv8，用 yolov8n-pose.pt
@@ -45,7 +45,7 @@ WORKERS = 0         # ✅ 强烈建议 Windows 下先用 0，避免多进程文�
 # 动态生成数据（步骤1同源）
 BG_DIR = Path(r"data\background")
 CARD_DIR = Path(r"data\business_card_raw")
-RUNTIME_DIR = Path(r"pose_four_points\assets\synth_kpt_runtime")
+RUNTIME_DIR = Path(r"pose_four_points\assets\synth_kpt_runtime_testworkers")
 
 # 动态数据规模：每个 epoch 动态生成 = static_train_len * MULTIPLIER
 RUNTIME_MULTIPLIER = 1.0
