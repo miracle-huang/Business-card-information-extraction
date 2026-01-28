@@ -14,6 +14,9 @@ env/
 # Ultralytics / YOLO
 weights/
 *.pt
+!streamlit/models/classification/best.pt
+!streamlit/models/content/best.pt
+!streamlit/models/segmentation/best.pt
 *.cache
 
 # =====================

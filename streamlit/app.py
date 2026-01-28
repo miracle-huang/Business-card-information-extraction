@@ -27,9 +27,9 @@ st.sidebar.header("Model Configuration")
 # But we need to handle paths robustly.
 PROJECT_ROOT = current_dir.parent
 
-DEFAULT_SEG_MODEL = PROJECT_ROOT / "weights/segmentation_classification/step3_seg_yolo11x_bs32_epoch50/weights/best.pt"
-DEFAULT_CLS_MODEL = PROJECT_ROOT / "weights/segmentation_classification/step4_upright_cls_yolo11x_bs16_epoch50/weights/best.pt"
-DEFAULT_CONTENT_MODEL = PROJECT_ROOT / "content_recognition/runs/train_yolo11x_bs32_img960_epoch50/weights/best.pt"
+DEFAULT_SEG_MODEL = PROJECT_ROOT / "streamlit/models/segmentation/best.pt"
+DEFAULT_CLS_MODEL = PROJECT_ROOT / "streamlit/models/classification/best.pt"
+DEFAULT_CONTENT_MODEL = PROJECT_ROOT / "streamlit/models/content/best.pt"
 
 seg_model_path = st.sidebar.text_input("Segmentation Model Path", str(DEFAULT_SEG_MODEL))
 cls_model_path = st.sidebar.text_input("Classification (Upright) Model Path", str(DEFAULT_CLS_MODEL))
@@ -68,16 +68,51 @@ except Exception as e:
 # Main UI
 # =========================
 
-st.header("Step 1: Upload Image")
-uploaded_file = st.file_uploader("Choose an image...", type=['jpg', 'jpeg', 'png', 'webp'])
+st.header("Step 1: Input Image")
 
-if uploaded_file is not None:
-    # Convert to CV2 image
-    file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
-    image = cv2.imdecode(file_bytes, 1) # BGR
+input_method = st.radio("Input Method", ["Upload Image", "Use Example Image"], horizontal=True)
+
+image = None
+image_name = ""
+
+if input_method == "Upload Image":
+    uploaded_file = st.file_uploader("Choose an image...", type=['jpg', 'jpeg', 'png', 'webp'])
+    if uploaded_file is not None:
+        file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+        image = cv2.imdecode(file_bytes, 1) # BGR
+        image_name = uploaded_file.name
+
+elif input_method == "Use Example Image":
+    st.write("Select an example image:")
+    # Calculate example paths
+    example_dir = current_dir / "examples"
+    ex_images = {
+        "Example 1": example_dir / "example_2cards.jpg",
+        "Example 2": example_dir / "example_3cards.jpg",
+        "Example 3": example_dir / "example_4cards.jpg"
+    }
     
+    # Columns for thumbnails
+    col_ex1, col_ex2, col_ex3 = st.columns(3)
+    with col_ex1:
+        st.image(str(ex_images["Example 1"]), caption="Example 1", use_container_width=True)
+    with col_ex2:
+        st.image(str(ex_images["Example 2"]), caption="Example 2", use_container_width=True)
+    with col_ex3:
+        st.image(str(ex_images["Example 3"]), caption="Example 3", use_container_width=True)
+
+    selected_example = st.radio("Choose Example:", list(ex_images.keys()), horizontal=True)
+    
+    if selected_example:
+        ex_path = ex_images[selected_example]
+        if ex_path.exists():
+            image = cv2.imread(str(ex_path))
+            image_name = selected_example
+
+if image is not None:
     # Display Original
-    st.image(cv2.cvtColor(image, cv2.COLOR_BGR2RGB), caption="Original Image", use_column_width=True)
+    st.image(cv2.cvtColor(image, cv2.COLOR_BGR2RGB), caption="Original Image", use_container_width=True)
+
     
     # Step 2: Extract Cards
     st.header("Step 2: Card Extraction")
@@ -115,12 +150,12 @@ if uploaded_file is not None:
                 cv2.addWeighted(overlay, alpha, image, 1 - alpha, 0, overlay)
                 
                 with col1:
-                    st.image(cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB), caption="Segmentation Mask", use_column_width=True)
+                    st.image(cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB), caption="Segmentation Mask", use_container_width=True)
                 
                 # Show Extracted Card
                 card_img_bgr = card_data['crop_img']
                 with col2:
-                    st.image(cv2.cvtColor(card_img_bgr, cv2.COLOR_BGR2RGB), caption=f"Extracted & Upright (Rot: {card_data['rotation_k']*90} deg)", use_column_width=True)
+                    st.image(cv2.cvtColor(card_img_bgr, cv2.COLOR_BGR2RGB), caption=f"Extracted & Upright (Rot: {card_data['rotation_k']*90} deg)", use_container_width=True)
                 
                 # Step 3: Content Recognition
                 with col3:
@@ -132,7 +167,7 @@ if uploaded_file is not None:
                         conf_thres=conf_content,
                         device=device
                     )
-                    st.image(cv2.cvtColor(annotated_card, cv2.COLOR_BGR2RGB), caption="Content Detection", use_column_width=True)
+                    st.image(cv2.cvtColor(annotated_card, cv2.COLOR_BGR2RGB), caption="Content Detection", use_container_width=True)
                 
                 # Show Results Table
                 if detections:
