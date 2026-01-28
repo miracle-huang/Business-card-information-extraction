@@ -38,7 +38,14 @@ content_model_path = st.sidebar.text_input("Content Recognition Model Path", str
 st.sidebar.subheader("Inference Settings")
 conf_seg = st.sidebar.slider("Segmentation Confidence", 0.1, 1.0, 0.25)
 conf_content = st.sidebar.slider("Content Detection Confidence", 0.1, 1.0, 0.25)
-device = st.sidebar.selectbox("Device", ["0", "cpu"], index=0)
+import torch
+
+# Determine available devices
+available_devices = ["cpu"]
+if torch.cuda.is_available():
+    available_devices.insert(0, "0")
+
+device = st.sidebar.selectbox("Device", available_devices, index=0)
 
 # =========================
 # Model Loading
