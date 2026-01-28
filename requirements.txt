@@ -13,3 +13,6 @@ pillow
 
 # ===== Utilities =====
 tqdm
+
+# ===== GUI =====
+streamlit
