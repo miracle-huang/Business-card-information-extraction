@@ -2,7 +2,7 @@
 
 [![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://projectbusiness-card-information-extraction.streamlit.app/)
 
-> 🚀 **ライブデモ**: [https://business-card-information-extraction.streamlit.app/](https://projectbusiness-card-information-extraction.streamlit.app/)
+> 🚀 **ライブデモ**: [https://projectbusiness-card-information-extraction.streamlit.app/](https://projectbusiness-card-information-extraction.streamlit.app/)
 
 ---
 
