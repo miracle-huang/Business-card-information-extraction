@@ -77,7 +77,7 @@ except Exception as e:
 
 st.header("Step 1: Input Image")
 
-input_method = st.radio("Input Method", ["Upload Image", "Use Example Image"], horizontal=True)
+input_method = st.radio("Input Method", ["Use Example Image", "Upload Image"], horizontal=True)
 
 image = None
 image_name = ""
