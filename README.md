@@ -4,7 +4,6 @@
 
 > 🚀 **ライブデモ**: [https://projectbusiness-card-information-extraction.streamlit.app/](https://projectbusiness-card-information-extraction.streamlit.app/)
 
----
 
 ## 📋 プロジェクト概要
 
