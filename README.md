@@ -2,8 +2,16 @@
 
 [![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://projectbusiness-card-information-extraction.streamlit.app/)
 
-> 🚀 **ライブデモ**: [https://projectbusiness-card-information-extraction.streamlit.app/](https://projectbusiness-card-information-extraction.streamlit.app/)
+🚀 **ライブデモ**: [https://projectbusiness-card-information-extraction.streamlit.app/](https://projectbusiness-card-information-extraction.streamlit.app/)
+> [!NOTE]
+> Streamlitの初回起動時には初期化が必要なため、しばらくお待ちください。
+> <p align="left">
+>  <img src="images/streamlit_loading.gif" width="20%"/>
+> </p>
 
+<p align="center">
+  <img src="images/streamlit_exhibition_reduce.gif" width="60%"/>
+</p>
 
 ## 📋 プロジェクト概要
 
