@@ -82,10 +82,34 @@
 
 ### 📸 結果プレビュー
 
-<!-- 結果画像のプレースホルダー -->
+<!-- 
 | 名刺検出 | 方向復元 | 内容検出 | OCR |
 |:---:|:---:|:---:|:---|
 | <img src="images/revert_image.jpg" width="300"> | <img src="images/image_seg_1.jpg" width="200"><br><img src="images/image_seg_2.jpg" width="200"> | <img src="images/image_detect_1.jpg" width="200"><br><img src="images/image_detect_2.jpg" width="200"> | Card1: <br><ul><li><b>phone:</b> 03-1234-5678</li><li><b>company:</b> 株式会社ネクストイノベーション</li><li><b>name:</b> 山田 太郎</li><li><b>email:</b> yamada@next-innovation cojp</li><li><b>address:</b> 150-0043 東京都渋谷区道玄坂1-2-3</li><li><b>phone:</b> 090-9876-5432</li></ul><br>Card2: <br><ul> <li><b>phone:</b> 0565-21-1970</li> <li><b>company:</b> 山町鍛垢</li> <li><b>address:</b> 470-1217 愛知フ笠田市大成町3-37</li> <li><b>email:</b> you@and-youjp</li> <li><b>name:</b> 山田 太郎</li> <li><b>phone:</b> 0565-21-1971</li> </ul>|
+-->
+| 名刺検出 | 方向復元 | 内容検出 |
+|:---:|:---:|:---:|
+| <img src="images/revert_image.jpg" width="500"> | <img src="images/image_seg_1.jpg" width="300"><br><img src="images/image_seg_2.jpg" width="300"> | <img src="images/image_detect_1.jpg" width="300"><br><img src="images/image_detect_2.jpg" width="300"> | 
+
+**OCR結果**
+
+| Field | Value |
+|---------|------------------------------|
+| phone | 03-1234-5678 |
+| company | 株式会社ネクストイノベーション |
+| name | 山田 太郎 |
+| email | yamada@next-innovation cojp |
+| address | 150-0043 東京都渋谷区道玄坂1-2-3 |
+| phone | 090-9876-5432 |
+
+| Field | Value |
+|---------|------------------------------|
+| phone | 0565-21-1970 |
+| company | 山町鍛垢 |
+| address | 470-1217 愛知フ笠田市大成町3-37 |
+| email | you@and-youjp |
+| name | 山田 太郎 |
+| phone | 0565-21-1971 |
 
 ---
 
