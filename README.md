@@ -1,10 +1,21 @@
 # 🪪 Business Card Information Extraction
 
+<p align="center">
+  <img src="images/streamlit_exhibition_reduce.gif" width="80%" alt="Demo">
+  <br>
+  <em>YOLOv11による名刺検出とOCR情報抽出</em>
+</p>
+
+
+> [!WARNING]
+> 名刺には個人情報が含まれるため、Streamlitに画像を送信する運用は利用規約・社内規程・法令に照らして慎重に検討してください。
+
 [![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://projectbusiness-card-information-extraction.streamlit.app/)
 
 🚀 **ライブデモ**: [https://projectbusiness-card-information-extraction.streamlit.app/](https://projectbusiness-card-information-extraction.streamlit.app/)
+
 > [!NOTE]
-> Streamlitの初回起動時には初期化が必要なため、しばらくお待ちください。
+> 注意： Streamlit の初回起動時にはリソースの初期化が必要なため、表示まで数分かかる場合があります。
 > <p align="left">
 >  <img src="images/streamlit_loading.gif" width="20%"/>
 > </p>
@@ -14,15 +25,47 @@
  - **傾き補正：** 傾いて配置された名刺を水平に補正します。
  - **情報抽出：** 名前、会社名、連絡先などをリアルタイムに読み取ります。
 
-<p align="center">
-  <img src="images/streamlit_exhibition_reduce.gif" width="80%" alt="Demo">
-  <br>
-  <em>YOLOv11による名刺検出とOCR情報抽出</em>
-</p>
-
 ## 📋 プロジェクト概要
 
 本プロジェクトは、**背景画像から複数の名刺を自動検出し、各名刺から会社名・氏名・電話番号・メールアドレス・住所などの情報を抽出する**エンドツーエンドのシステムです。
+
+### ⚠️ 対比：大規模言語モデル（LLM）の場合
+
+> LLM（例：GPT系モデル）を用いて、画像の名刺から**直接**情報抽出を行うアプローチには、運用上の制約があります。
+
+<details>
+  <summary><b>ハルシネーション（幻覚）</b></summary>
+  <ul>
+    <li>画像に存在しない社名・電話番号を“推測”して生成／誤読を確信的に出力します</li>
+    <li>データ品質・信頼性が担保できない</li>
+  </ul>
+</details>
+
+<details>
+  <summary><b>ネットワーク依存・情報リスク</b></summary>
+  <ul>
+    <li>API利用時のネットワーク環境により動作が不安定になる場合があります</li>
+    <li>個人情報を含むデータの取り扱いには十分な注意が必要です</li>
+  </ul>
+</details>
+
+<details>
+  <summary><b>スケールしづらい</b></summary>
+  <ul>
+    <li>Web UIはバッチ処理に不向き</li>
+    <li>APIは課金・実装・運用コストが大きい</li>
+  </ul>
+</details>
+
+<details>
+  <summary><b>レイテンシ</b></summary>
+  <ul>
+    <li>1枚ごとに一定の推論・対話時間が必要</li>
+  </ul>
+</details>
+
+以下の共有ログでは、LLMで名刺情報抽出を試した際に発生し得る「誤抽出（推測）」や「処理時間」の問題を例示しています。
+- 🔗 共有リンク： https://chatgpt.com/share/69805540-31f0-8010-ab6a-61111bc74f41
 
 ### 🎯 解決する課題
 
@@ -33,16 +76,16 @@
 ### ✨ 主な機能
 
 1. **名刺検出**: 背景画像から複数枚の名刺を同時検出
-2. **名刺回正**: セグメンテーション + 分類モデルによる自動回転補正
+2. **方向復元**: セグメンテーション + 分類モデルによる自動回転補正
 3. **コンテンツ認識**: YOLO11による情報領域検出 + EasyOCRによるテキスト抽出
 4. **JSON出力**: 抽出結果を構造化データとして出力
 
 ### 📸 結果プレビュー
 
 <!-- 結果画像のプレースホルダー -->
-| 入力画像 | 検出結果 | 抽出情報 |
-|:--------:|:--------:|:--------:|
-| ![input](docs/images/input_placeholder.png) | ![detection](docs/images/detection_placeholder.png) | ![extraction](docs/images/extraction_placeholder.png) |
+| 名刺検出 | 方向復元 | 内容検出 | OCR |
+|:---:|:---:|:---:|:---|
+| <img src="images/revert_image.jpg" width="300"> | <img src="images/image_seg_1.jpg" width="200"><br><img src="images/image_seg_2.jpg" width="200"> | <img src="images/image_detect_1.jpg" width="200"><br><img src="images/image_detect_2.jpg" width="200"> | Card1: <br><ul><li><b>phone:</b> 03-1234-5678</li><li><b>company:</b> 株式会社ネクストイノベーション</li><li><b>name:</b> 山田 太郎</li><li><b>email:</b> yamada@next-innovation cojp</li><li><b>address:</b> 150-0043 東京都渋谷区道玄坂1-2-3</li><li><b>phone:</b> 090-9876-5432</li></ul><br>Card2: <br><ul> <li><b>phone:</b> 0565-21-1970</li> <li><b>company:</b> 山町鍛垢</li> <li><b>address:</b> 470-1217 愛知フ笠田市大成町3-37</li> <li><b>email:</b> you@and-youjp</li> <li><b>name:</b> 山田 太郎</li> <li><b>phone:</b> 0565-21-1971</li> </ul>|
 
 ---
 
