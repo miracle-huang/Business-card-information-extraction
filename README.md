@@ -9,8 +9,15 @@
 >  <img src="images/streamlit_loading.gif" width="20%"/>
 > </p>
 
+ **主な機能：**
+ - **自動検出：** 背景にある複数の名刺を自動で認識します。
+ - **傾き補正：** 傾いて配置された名刺を水平に補正します。
+ - **情報抽出：** 名前、会社名、連絡先などをリアルタイムに読み取ります。
+
 <p align="center">
-  <img src="images/streamlit_exhibition_reduce.gif" width="60%"/>
+  <img src="images/streamlit_exhibition_reduce.gif" width="80%" alt="Demo">
+  <br>
+  <em>YOLOv11による名刺検出とOCR情報抽出</em>
 </p>
 
 ## 📋 プロジェクト概要
