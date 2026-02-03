@@ -6,13 +6,21 @@
   <em>YOLOv11による名刺検出とOCR情報抽出</em>
 </p>
 
-
 > [!WARNING]
 > 名刺には個人情報が含まれるため、Streamlitに画像を送信する運用は利用規約・社内規程・法令に照らして慎重に検討してください。
 
 [![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://projectbusiness-card-information-extraction.streamlit.app/)
 
+
 🚀 **ライブデモ**: [https://projectbusiness-card-information-extraction.streamlit.app/](https://projectbusiness-card-information-extraction.streamlit.app/)
+
+📱 **QRコード**: このQRコードは [ <img src="https://qrfy.com/favicon.ico" width="14" style="vertical-align: middle;"> QRFY](https://qrfy.com/)で作成されました。
+<p align="left">
+  <a href="https://projectbusiness-card-information-extraction.streamlit.app/">
+    <img src="images/qrcode.jpeg" width="120" alt="QR Code for Demo">
+  </a>
+  <br>
+</p>
 
 > [!NOTE]
 > 注意： Streamlit の初回起動時にはリソースの初期化が必要なため、表示まで数分かかる場合があります。
