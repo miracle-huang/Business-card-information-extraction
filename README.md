@@ -91,7 +91,7 @@
 |:---:|:---:|:---:|
 | <img src="images/revert_image.jpg" width="500"> | <img src="images/image_seg_1.jpg" width="300"><br><img src="images/image_seg_2.jpg" width="300"> | <img src="images/image_detect_1.jpg" width="300"><br><img src="images/image_detect_2.jpg" width="300"> | 
 
-**OCR結果**
+**OCR出力**
 
 | Field | Value |
 |---------|------------------------------|
@@ -121,7 +121,7 @@
 | **OCRエンジン** | EasyOCR |
 | **画像処理** | OpenCV, NumPy, Pillow |
 | **GUI** | Streamlit |
-| **開発環境** | Google Colab (GPU A100対応) |
+| **開発環境** |ローカル（NVIDIA GeForce RTX 3060 Laptop）,  Google Colab (GPU A100対応) |
 
 ---
 
