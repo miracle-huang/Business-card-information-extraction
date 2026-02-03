@@ -278,21 +278,18 @@ python four_angles/train_step3.py
 python four_angles/tools/predict_step4_warp.py
 ```
 
-**課題**: 
-- ⚠️ 角の検出精度が低い場合、全体の抽出精度に大きく影響
-- ⚠️ 複数名刺の重なりに弱い
 
-<details>
 <summary><b>🔍 デバッグ結果例</b></summary>
 
 | 検出結果 (Debug) | 抽出結果 |
 |:---:|:---:|
-| <img src="images/four_angles_debug.jpg" width="400"> | <img src="images/four_angles_card00.jpg" width="200"><br><img src="images/four_angles_card01.jpg" width="200"> |
+| <img src="images/four_angles_debug.jpg" width="400"> | **1枚目の名刺が正しく補正されません**<br><br><img src="images/four_angles_card00.jpg" width="300"><br><br>**2枚目の名刺が認識されません** |
 
-- 上記の例では、角の検出位置がずれており、正しく名刺を抽出できていません
-- 抽出結果の1枚目は背景のみ、2枚目は上下逆さまになっています
+**存在の問題**:
+- ⚠️ 名刺内のコンテンツが分散しており、モデルが正しい四角セマンティクスを学習しにくい
 
-</details>
+**解決策略**:
+- → 角点を学習できるYOLO-Poseを使用し、矩形の4つの角を順序付きの4点としてアノテーション
 
 ---
 
@@ -317,21 +314,18 @@ python pose_four_points/step3_train_kpt_hybrid.py
 python pose_four_points/step4_predict_and_warp_kpt.py
 ```
 
-**課題**:
-- ⚠️ キーポイントの順序が不安定になる場合がある
-- ⚠️ 回転角度によっては正しい向きに補正できない
-
-<details>
 <summary><b>🔍 デバッグ結果例</b></summary>
 
 | 検出結果 (Debug) | 抽出結果 |
 |:---:|:---:|
 | <img src="images/pose_four_points_debug.jpg" width="400"> | <img src="images/pose_four_points_card01.jpg" width="200"><br><img src="images/pose_four_points_card02.jpg" width="200"> |
 
-- 上記の例では、キーポイントの順序（1,2,3）が名刺の回転に対して一貫していません
-- 右上の名刺（上下逆さま）のキーポイント順序が正しくないため、正立補正が困難です
+**存在の問題**:
+- ⚠️ キーポイントの順序が回転角度によって不安定になる（上記例：右上の名刺のキーポイント順序が不正）
+- ⚠️ 正立向きの判定ができないため、補正後も上下逆さまになる場合がある
 
-</details>
+**解決策略**:
+- → セグメンテーション + 分類の2段階パイプラインを採用し、向き判定を独立したモデルで実行
 
 ---
 
