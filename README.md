@@ -140,7 +140,12 @@ Business-card-information-extraction/
 │   └── business_card_v2/       # 名刺データセット v2 (コンテンツ認識用)
 │
 ├── 📂 four_angles/             # 四角検出方式 (Strategy 1)
-│   └── src/                    # 合成・学習コード
+│   ├── tools/
+│   │   ├── synth_step1_generate.py      # データセット合成
+│   │   ├── split_step2.py               # Train/Val分割
+│   │   └── predict_step4_warp.py        # 推論・回正
+│   ├── train_step3.py                   # モデル学習
+│   └── src/                             # 合成・学習コード
 │
 ├── 📂 pose_four_points/        # YOLO11-Pose方式 (Strategy 2)
 │   ├── step1_gen_kpt_synth.py     # データセット合成
@@ -260,7 +265,17 @@ Colab環境では以下の手順で実行できます:
 
 **実行手順:**
 ```bash
+# Step 1: データセット合成
+python four_angles/tools/synth_step1_generate.py
+
+# Step 2: Train/Val分割
+python four_angles/tools/split_step2.py
+
+# Step 3: モデル学習
 python four_angles/train_step3.py
+
+# Step 4: 推論・回正
+python four_angles/tools/predict_step4_warp.py
 ```
 
 **課題**: 
