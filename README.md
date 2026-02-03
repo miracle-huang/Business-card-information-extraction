@@ -221,7 +221,7 @@ Colab環境では以下の手順で実行できます:
 #### 名刺データの収集
 
 - **素材**: インターネットから収集した公開名刺画像
-- **前処理**: [Nano Banana](https://github.com/...)（超解像技術）による画像鮮明化処理
+- **前処理**: [Nano Banana](https://github.com/...)による画像鮮明化処理
 
 #### Roboflowによるデータ整理
 
@@ -259,7 +259,7 @@ Colab環境では以下の手順で実行できます:
 
 ### Strategy 1: 四角検出方式 (Four Angles)
 
-📂 `four_angles/`
+📂 [`four_angles/`](four_angles/)
 
 **手法**: 名刺の4つの角を検出し、透視変換で四角形を抽出
 
@@ -282,11 +282,23 @@ python four_angles/tools/predict_step4_warp.py
 - ⚠️ 角の検出精度が低い場合、全体の抽出精度に大きく影響
 - ⚠️ 複数名刺の重なりに弱い
 
+<details>
+<summary><b>🔍 デバッグ結果例</b></summary>
+
+| 検出結果 (Debug) | 抽出結果 |
+|:---:|:---:|
+| <img src="images/four_angles_debug.jpg" width="400"> | <img src="images/four_angles_card00.jpg" width="200"><br><img src="images/four_angles_card01.jpg" width="200"> |
+
+- 上記の例では、角の検出位置がずれており、正しく名刺を抽出できていません
+- 抽出結果の1枚目は背景のみ、2枚目は上下逆さまになっています
+
+</details>
+
 ---
 
 ### Strategy 2: YOLO11-Pose方式 (Pose Four Points)
 
-📂 `pose_four_points/`
+📂 [`pose_four_points/`](pose_four_points/)
 
 **手法**: YOLO11-Poseモデルで名刺の4隅をキーポイントとして検出
 
@@ -309,11 +321,23 @@ python pose_four_points/step4_predict_and_warp_kpt.py
 - ⚠️ キーポイントの順序が不安定になる場合がある
 - ⚠️ 回転角度によっては正しい向きに補正できない
 
+<details>
+<summary><b>🔍 デバッグ結果例</b></summary>
+
+| 検出結果 (Debug) | 抽出結果 |
+|:---:|:---:|
+| <img src="images/pose_four_points_debug.jpg" width="400"> | <img src="images/pose_four_points_card01.jpg" width="200"><br><img src="images/pose_four_points_card02.jpg" width="200"> |
+
+- 上記の例では、キーポイントの順序（1,2,3）が名刺の回転に対して一貫していません
+- 右上の名刺（上下逆さま）のキーポイント順序が正しくないため、正立補正が困難です
+
+</details>
+
 ---
 
 ### Strategy 3: Segmentation + Classification ⭐ 採用
 
-📂 `segmentation_classification/`
+📂 [`segmentation_classification/`](segmentation_classification/)
 
 **手法**: 
 1. YOLO11-Segで名刺領域をセグメンテーション
