@@ -326,14 +326,13 @@ python pose_four_points/step4_predict_and_warp_kpt.py
 
 | 検出結果 (Debug) | 抽出結果 |
 |:---:|:---:|
-| <img src="images/pose_four_points_debug.jpg" width="400"> | <img src="images/pose_four_points_card01.jpg" width="200"><br><img src="images/pose_four_points_card02.jpg" width="200"> |
+| <img src="images/pose_four_points_debug.jpg" width="400"> | **1枚目の名刺**<br><img src="images/pose_four_points_card01.jpg" width="300"><br><br>**2枚目の名刺**<br><img src="images/pose_four_points_card02.jpg" width="300"> |
 
 **存在の問題**:
-- ⚠️ キーポイントの順序が回転角度によって不安定になる（上記例：右上の名刺のキーポイント順序が不正）
-- ⚠️ 正立向きの判定ができないため、補正後も上下逆さまになる場合がある
+- ⚠️ YOLO-poseを使用して四角のセマンティクスによる補正は可能ですが、検出ボックスと名刺の重なり（IoU）が低すぎます。
 
 **解決策略**:
-- → セグメンテーション + 分類の2段階パイプラインを採用し、向き判定を独立したモデルで実行
+- → YOLO-segを用いて名刺のセグメンテーションを行い、精緻な輪郭を抽出した後、画像の向きを補正するための分類モデルを別途構築します。
 
 ---
 
@@ -378,7 +377,7 @@ python segmentation_classification/tools/step5_predict_warp_upright_v5.py
 | 方式 | 検出精度 | 回正精度 | 安定性 | 採用 |
 |:----:|:-------:|:-------:|:------:|:----:|
 | Four Angles | △ | △ | ✗ | - |
-| Pose Four Points | ○ | △ | ✗ | - |
+| Pose Four Points | △ | ○ | ✗ | - |
 | **Seg + Cls** | **◎** | **◎** | **◎** | **✅** |
 
 ---
@@ -390,6 +389,10 @@ python segmentation_classification/tools/step5_predict_warp_upright_v5.py
 抽出された単一名刺画像から、**会社名・氏名・電話番号・メールアドレス・住所**を認識します。
 
 ### アーキテクチャ
+
+| 領域検出 | クロップ |
+|:---:|:---:|
+| <img src="images/business_card01_debug.jpg" width="400"> | <img src="images/business_card01_0_name.jpg" width="200"><br><img src="images/business_card01_1_phone.jpg" width="200"><br><img src="images/business_card01_2_address.jpg" width="200"><br><img src="images/business_card01_3_company.jpg" width="200"><br><img src="images/business_card01_4_email.jpg" width="200"><br><img src="images/business_card01_5_phone.jpg" width="200"> |
 
 ```
 名刺画像 → YOLO11-Detect → Bounding Box → EasyOCR → JSON出力
@@ -436,13 +439,11 @@ python content_recognition/src/predict_ocr.py
   (矩形のみ)         (台形変換)
 ```
 
----
-
-## 📄 ライセンス
-
-本プロジェクトはMITライセンスの下で公開されています。
-
----
+<p align="center">
+  <img src="images/trapezoidal_transformation.png" width="40%" alt="Demo">
+  <br>
+  <em>台形変換の例</em>
+</p>
 
 ## 🙏 謝辞
 

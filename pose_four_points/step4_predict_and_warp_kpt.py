@@ -168,14 +168,14 @@ def draw_viz(img_bgr: np.ndarray, quads: List[np.ndarray], confs: List[float]) -
 class PredictWarpConfig:
     # model
     # 指向 step3 训练产出的 best.pt
-    model_path: Path = CUR_DIR / "runs" / "kpt_hybrid_no_aug" / "weights" / "best.pt"
+    model_path: Path = CUR_DIR.parent / "weights" / "pose_four_points" / "kpt_hybrid_yolo11x_pose_colab_bs32_epoch_50" / "weights" / "best.pt"
     device: str = "0"  # "cpu" or "0"
     imgsz: int = 640 # 这里要保持和训练
 
     # input/output
     # 默认处理 step1 生成的测试图，或者你可以改成你自己的待处理图片文件夹
     input_dir: Path = CUR_DIR / "assets" / "step1_test" / "images"
-    out_dir: Path = CUR_DIR / "outputs" / "step4_result"
+    out_dir: Path = CUR_DIR / "outputs" / "step4_result_colab"
 
     # thresholds
     conf: float = 0.25
