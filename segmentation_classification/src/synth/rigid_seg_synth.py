@@ -90,8 +90,8 @@ class SynthConfig:
 # IO helpers (Chinese path OK)
 # =========================
 def imread_any(path: Path) -> np.ndarray:
-    data = np.fromfile(str(path), dtype=np.uint8)
-    img = cv2.imdecode(data, cv2.IMREAD_UNCHANGED)
+    data = np.fromfile(str(path), dtype=np.uint8) # 用 NumPy 读取图像的二进制字节流
+    img = cv2.imdecode(data, cv2.IMREAD_UNCHANGED) # 用 OpenCV 解码成图像矩阵 IMREAD_UNCHANGED保留原始格式
     if img is None:
         raise FileNotFoundError(path)
     return img
@@ -99,39 +99,44 @@ def imread_any(path: Path) -> np.ndarray:
 
 def imwrite(path: Path, img: np.ndarray) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    ext = path.suffix.lower()
+    ext = path.suffix.lower() # path.suffix 返回文件扩展名
     ok, buf = cv2.imencode(ext, img)
     if not ok:
         raise RuntimeError(f"imencode failed: {path}")
     buf.tofile(str(path))
 
 
-def list_images(folder: Path) -> List[Path]:
+def list_images(folder: Path) -> List[Path]: # 递归遍历 folder 目录下所有子目录 
     if not folder.exists():
         return []
-    return sorted([p for p in folder.rglob("*") if p.is_file() and p.suffix.lower() in IMG_EXTS])
+    return sorted([p for p in folder.rglob("*") if p.is_file() and p.suffix.lower() in IMG_EXTS]) # 选出所有图片文件
+    # 按路径排序
+    # 返回排序后的 Path 列表
 
 
 def ensure_clean_dir(p: Path) -> None:
+    # 如果目录存在，先删除
     if p.exists():
         shutil.rmtree(p)
+    # 再创建目录
     p.mkdir(parents=True, exist_ok=True)
 
 
 # =========================
-# Geometry helpers
+# Geometry helpers 几何辅助函数
 # =========================
 def bbox_from_points(pts: np.ndarray) -> Tuple[float, float, float, float]:
-    xs = pts[:, 0]
-    ys = pts[:, 1]
+    # 从一组二维点坐标中，计算其 轴对齐外接矩形（axis-aligned bounding box, AABB）
+    xs = pts[:, 0] # 取所有点的 x 坐标
+    ys = pts[:, 1] # 取所有点的 y 坐标
     return float(xs.min()), float(ys.min()), float(xs.max()), float(ys.max())
 
-
+# 从一个浮点 bbox（xyxy 格式）出发，加 padding，并裁剪到图像范围内，生成一个可用于 numpy 切片的整数 ROI。
 def compute_roi_from_bbox(
-    bbox_xyxy: Tuple[float, float, float, float],
-    img_w: int,
-    img_h: int,
-    pad: int,
+    bbox_xyxy: Tuple[float, float, float, float], # (x0, y0, x1, y1)
+    img_w: int, # 图像宽度
+    img_h: int, # 图像高度
+    pad: int, # padding, 扩张像素
 ) -> Optional[Tuple[int, int, int, int]]:
     x0, y0, x1, y1 = bbox_xyxy
     rx0 = int(math.floor(x0 - pad))
@@ -140,6 +145,7 @@ def compute_roi_from_bbox(
     ry1 = int(math.ceil(y1 + pad))
 
     # clamp for slicing [ry0:ry1, rx0:rx1], so upper bound can be img_w/img_h
+    # 把坐标值强制限制在图像合法边界之内，避免越界（out-of-bounds）
     rx0 = max(0, min(img_w, rx0))
     ry0 = max(0, min(img_h, ry0))
     rx1 = max(0, min(img_w, rx1))
@@ -149,7 +155,7 @@ def compute_roi_from_bbox(
         return None
     return rx0, ry0, rx1, ry1
 
-
+# 判断两个 AABB（Axis-Aligned Bounding Box，轴对齐矩形）是否相交
 def aabb_intersects(a: Tuple[float, float, float, float], b: Tuple[float, float, float, float]) -> bool:
     ax0, ay0, ax1, ay1 = a
     bx0, by0, bx1, by1 = b
@@ -157,15 +163,20 @@ def aabb_intersects(a: Tuple[float, float, float, float], b: Tuple[float, float,
         return False
     return True
 
-
+# 使用仿射变换矩阵 M 对一组二维点 pts 进行批量坐标变换。
+# 用于计算名片四角在旋转+平移后的新位置
 def affine_transform_points(M: np.ndarray, pts: np.ndarray) -> np.ndarray:
-    pts = pts.astype(np.float32)
+    # M: 2x3 仿射变换矩阵
+    # pts: (N, 2) 坐标点
+    pts = pts.astype(np.float32) # OpenCV 默认使用 float32
     ones = np.ones((pts.shape[0], 1), dtype=np.float32)
     pts_h = np.concatenate([pts, ones], axis=1)
     out = (M @ pts_h.T).T
-    return out.astype(np.float32)
+    return out.astype(np.float32) # 返回变换后的坐标点
 
-
+# 生成一张“卡片图像”的四个角点坐标（按 TL, TR, BR, BL 顺序），用于几何变换或标注同步。
+# card_corners → 描述整张卡片
+# ROI → 描述卡片在背景中的位置
 def card_corners(Wc: int, Hc: int) -> np.ndarray:
     """
     TL, TR, BR, BL corners in pixel coordinates.
@@ -175,27 +186,34 @@ def card_corners(Wc: int, Hc: int) -> np.ndarray:
     h1 = float(max(0, Hc - 1))
     return np.array([[0.0, 0.0], [w1, 0.0], [w1, h1], [0.0, h1]], dtype=np.float32)
 
-
+# 判断一个四边形（通常是名片四角）是否完全位于图像内部，并且距离图像边界至少 margin 像素
 def corners_within_margin(quad: np.ndarray, img_w: int, img_h: int, margin: int) -> bool:
+    #quad: np.ndarray   # shape = (4, 2)，四个角点
+    #img_w: int         # 图像宽度
+    #img_h: int         # 图像高度
+    #margin: int        # 安全边距
     if np.any(quad[:, 0] < margin) or np.any(quad[:, 0] > img_w - 1 - margin):
         return False
     if np.any(quad[:, 1] < margin) or np.any(quad[:, 1] > img_h - 1 - margin):
         return False
     return True
 
-
+# 构建仿射变换矩阵（旋转+平移）
 def build_affine_rotation_translation(Wc: int, Hc: int, angle_deg: float, center_bg: Tuple[float, float]) -> np.ndarray:
     """
     Rotation around card center (scale=1.0), then translate to background center (cx_bg, cy_bg).
     """
     cx_bg, cy_bg = center_bg
     center_card = ((Wc - 1) / 2.0, (Hc - 1) / 2.0)
+    # 旋转：以名片中心为圆心，旋转 angle_deg 度
     M = cv2.getRotationMatrix2D(center_card, angle_deg, 1.0)  # scale=1.0 (no resize aug)
+    # 平移：将旋转后的图像移动到背景中心
     M[0, 2] += cx_bg - center_card[0]
     M[1, 2] += cy_bg - center_card[1]
     return M.astype(np.float32)
 
-
+# 把一个四边形（quad）转换为 YOLO segmentation 标注格式的一行字符串（归一化坐标）
+# 把几何四角转换为 YOLO 训练可用格式
 def yolo_seg_line(class_id: int, quad: np.ndarray, img_w: int, img_h: int) -> Optional[str]:
     """
     YOLO-seg label line:
@@ -221,13 +239,14 @@ def yolo_seg_line(class_id: int, quad: np.ndarray, img_w: int, img_h: int) -> Op
 # =========================
 @dataclass
 class CardCacheItem:
-    bgr: np.ndarray
-    mask_u8: np.ndarray  # 0~255
-    H: int
-    W: int
-    diag: float
+    # 缓存加载和预处理后的名片数据，避免重复读取
+    bgr: np.ndarray # BGR 图像
+    mask_u8: np.ndarray  # 掩膜 0~255
+    H: int # 高度
+    W: int # 宽度
+    diag: float # 对角线长度
 
-
+# 将名片缩放到固定宽度 fixed_w，保持宽高比
 def resize_card_to_fixed_width_keep_alpha(card: np.ndarray, fixed_w: int) -> np.ndarray:
     if card.ndim == 2:
         card = cv2.cvtColor(card, cv2.COLOR_GRAY2BGR)
@@ -247,16 +266,21 @@ def get_card_cached(cache: Dict[str, CardCacheItem], card_path: str, cfg: SynthC
     """
     Cache stores fixed-size cards (fixed_card_w). We do NOT downscale cards anymore
     because we will enlarge background dynamically for 3/4 cards.
+    读取一张名片图 → 统一到固定宽度 → 拆出 BGR 与 mask → 计算一些几何属性 → 放入缓存并复用。
     """
+    # 1) 缓存命中直接返回
     if card_path in cache:
         return cache[card_path]
 
+    # 2) 读取并缩放到固定宽度
     raw = imread_any(Path(card_path))
     resized = resize_card_to_fixed_width_keep_alpha(raw, cfg.fixed_card_w)
 
+    # 3) 如果读出来是灰度图 (H,W)，转成BGR (H,W,3)
     if resized.ndim == 2:
         resized = cv2.cvtColor(resized, cv2.COLOR_GRAY2BGR)
 
+    # 4) 拆分 BGR 与 mask（优先用 alpha）
     if resized.ndim == 3 and resized.shape[2] == 4:
         bgr = resized[:, :, :3].copy()
         alpha = resized[:, :, 3].copy()
@@ -265,45 +289,58 @@ def get_card_cached(cache: Dict[str, CardCacheItem], card_path: str, cfg: SynthC
         bgr = resized[:, :, :3].copy()
         mask_u8 = np.full((bgr.shape[0], bgr.shape[1]), 255, dtype=np.uint8)
 
+    # 5) 计算尺寸与对角线长度
     Hc, Wc = bgr.shape[:2]
     diag = float(math.sqrt(Wc * Wc + Hc * Hc))
+
+    # 6) 打包成 CardCacheItem，写入缓存并返回
     item = CardCacheItem(bgr=bgr, mask_u8=mask_u8, H=Hc, W=Wc, diag=diag)
     cache[card_path] = item
     return item
 
 
 # =========================
-# ROI warp/composite
+# ROI warp/composite ROI 仿射变换与合成
 # =========================
+
+'''
+在 ROI 局部区域内 对名片做仿射变换
+用同一个 2×3 仿射矩阵 M_roi，
+把 卡片的颜色图（BGR） 和 卡片的 mask（u8） 变换到一个指定大小的 ROI 坐标系中，
+得到“变换后的卡片贴图”和“变换后的有效区域”。
+'''
 def warp_affine_roi(card_bgr: np.ndarray, card_mask_u8: np.ndarray, M_roi: np.ndarray, roi_w: int, roi_h: int):
     warp_bgr = cv2.warpAffine(
-        card_bgr,
-        M_roi,
-        (roi_w, roi_h),
-        flags=cv2.INTER_LINEAR,
-        borderMode=cv2.BORDER_CONSTANT,
-        borderValue=(0, 0, 0),
+        card_bgr,  # 输入图像
+        M_roi,  # 2×3 仿射变换矩阵
+        (roi_w, roi_h),  # 输出图像尺寸
+        flags=cv2.INTER_LINEAR,  # 插值方式
+        borderMode=cv2.BORDER_CONSTANT,  # 边界模式
+        borderValue=(0, 0, 0),  # 边界填充值
     )
     warp_mask = cv2.warpAffine(
-        card_mask_u8,
-        M_roi,
-        (roi_w, roi_h),
-        flags=cv2.INTER_NEAREST,
+        card_mask_u8,  # 输入掩膜
+        M_roi,  # 同一个仿射矩阵
+        (roi_w, roi_h),  # 同一个输出尺寸
+        flags=cv2.INTER_NEAREST,  # mask 用最近邻插值（保持 0/255）
         borderMode=cv2.BORDER_CONSTANT,
         borderValue=0,
     )
     return warp_bgr, warp_mask
 
-
+'''
+Alpha blending（α 混合）: 按照透明度（alpha）把前景图像叠加到背景图像上
+'''
 def composite_roi_inplace(bg_roi: np.ndarray, fg_roi: np.ndarray, mask_u8: np.ndarray) -> None:
-    alpha = (mask_u8.astype(np.float32) / 255.0)[:, :, None]
-    out = bg_roi.astype(np.float32) * (1.0 - alpha) + fg_roi.astype(np.float32) * alpha
-    bg_roi[:] = np.clip(out, 0, 255).astype(np.uint8)
+    alpha = (mask_u8.astype(np.float32) / 255.0)[:, :, None] # 归一化到 0~1，并扩展为 3 通道
+    out = bg_roi.astype(np.float32) * (1.0 - alpha) + fg_roi.astype(np.float32) * alpha # alpha 混合
+    bg_roi[:] = np.clip(out, 0, 255).astype(np.uint8) # 把数组中的所有元素限制在指定区间内
 
 
 # =========================
 # Debug
 # =========================
+# 在图像副本上画出每张名片的四边形轮廓（绿色）和角点（红色圆点）
 def draw_debug(img_bgr: np.ndarray, quads: List[np.ndarray]) -> np.ndarray:
     vis = img_bgr.copy()
     for quad in quads:
@@ -317,6 +354,7 @@ def draw_debug(img_bgr: np.ndarray, quads: List[np.ndarray]) -> np.ndarray:
 # =========================
 # New: choose target number with weights
 # =========================
+# 根据配置中的权重，从 [min_cards, max_cards] 范围内随机采样本张图要放多少张卡片。
 def sample_num_cards(rng: random.Random, cfg: SynthConfig) -> int:
     choices = list(range(cfg.min_cards, cfg.max_cards + 1))
     weights = []
@@ -335,6 +373,7 @@ def sample_num_cards(rng: random.Random, cfg: SynthConfig) -> int:
 # =========================
 # New: enlarge background if needed for 3/4 cards
 # =========================
+# 动态背景放大
 def required_canvas_for_target(
     max_diag: float,
     target_n: int,
@@ -351,23 +390,28 @@ def required_canvas_for_target(
     For target 2: layout 1x2 (rows=1, cols=2)
     For target 3/4: layout 2x2 (rows=2, cols=2)  (conservative)
     """
-    r = max_diag / 2.0
+    r = max_diag / 2.0 # 用圆来近似卡片，半径为 max_diag（对角线）/2
+
+    # 根据目标卡片数量选择布局
     if target_n <= 2:
         rows, cols = 1, 2
     else:
         rows, cols = 2, 2
 
+    # 计算需要的背景尺寸
     req_w = 2.0 * (margin + r) + (cols - 1) * (2.0 * r + gap)
     req_h = 2.0 * (margin + r) + (rows - 1) * (2.0 * r + gap)
     return req_w, req_h
 
-
+# 根据当前要放的卡片数量和尺寸，必要时动态放大背景图，以确保卡片能安全排布（不重叠、不贴边）
 def maybe_enlarge_background(
     bg_bgr: np.ndarray,
     cfg: SynthConfig,
     target_n: int,
     chosen_cards: List[CardCacheItem],
 ) -> np.ndarray:
+
+    # 配置开关控制
     if not cfg.dynamic_bg_enlarge:
         return bg_bgr
     if cfg.dynamic_bg_only_for_3plus and target_n < 3:
@@ -385,11 +429,12 @@ def maybe_enlarge_background(
         gap=int(cfg.min_gap_between_cards),
     )
 
-    s = max(req_w / float(w), req_h / float(h), 1.0)
-    s = min(s, float(cfg.max_bg_scale))
+    s = max(req_w / float(w), req_h / float(h), 1.0) # 计算理论所需放大比例
+    s = min(s, float(cfg.max_bg_scale)) # 限制最大放大比例
     if s <= 1.0 + 1e-6:
         return bg_bgr
 
+    # round：四舍五入
     new_w = int(round(w * s))
     new_h = int(round(h * s))
     # upscale => INTER_LINEAR
