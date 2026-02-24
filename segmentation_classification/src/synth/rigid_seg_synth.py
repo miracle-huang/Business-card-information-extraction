@@ -468,42 +468,51 @@ def synth_one_image(
 
         # ---- choose target & cards for this image (preselect) ----
         target_n = sample_num_cards(rng, cfg)
+        # 1. 从名片库中随机选出 target_n 张名片路径
         if len(card_paths) >= target_n:
             chosen_paths = [rng.choice(card_paths) for _ in range(target_n)]
         else:
             chosen_paths = [rng.choice(card_paths) for _ in range(target_n)]
 
+        # 通过前面的缓存机制，获取真实的名片数据（图像、Mask、长宽对角线等）
         chosen_items: List[CardCacheItem] = [get_card_cached(card_cache, p, cfg) for p in chosen_paths]
 
         # ---- background ----
+        # 2. 随机选一张背景图
         bg_path = Path(rng.choice(bg_paths))
         bg_raw = imread_any(bg_path)
 
+        # 如果背景图是灰度的，转成 BGR
         if bg_raw.ndim == 2:
             bg_raw = cv2.cvtColor(bg_raw, cv2.COLOR_GRAY2BGR)
         bg_bgr = bg_raw[:, :, :3] if (bg_raw.ndim == 3 and bg_raw.shape[2] == 4) else bg_raw
 
         # optional fixed output size (you can set out_w/out_h=None to NOT fix)
+        # （可选）如果配置文件写死了背景输出尺寸，先强行 Resize
         if cfg.out_w is not None and cfg.out_h is not None:
             bg_bgr = cv2.resize(bg_bgr, (int(cfg.out_w), int(cfg.out_h)), interpolation=cv2.INTER_AREA)
 
         # dynamic enlarge for 3/4 cards (when out_w/out_h is None, this makes size adaptive)
+        # 【核心功能】：如果抽到了 3、4 张名片，原始背景可能放不下，触发智能动态拉伸
         bg_bgr = maybe_enlarge_background(bg_bgr, cfg, target_n=target_n, chosen_cards=chosen_items)
 
         img_h, img_w = bg_bgr.shape[:2]
+        # 3. 初始化全黑的 Mask（用于记录名片占用的区域）
         occ = np.zeros((img_h, img_w), dtype=np.uint8)
 
         pad = int(cfg.min_gap_between_cards)
         kernel = None
         if pad > 0:
+            # 构造一个膨胀卷积核，后面对名片掩膜做膨胀，变相制造 gap 的安全区
             k = pad * 2 + 1
             kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
 
         placed_boxes_expanded: List[Tuple[float, float, float, float]] = []
-        labels: List[str] = []
-        quads_dbg: List[np.ndarray] = []
+        labels: List[str] = [] # 记录 YOLO 字符串标注
+        quads_dbg: List[np.ndarray] = [] # 记录四个角（用于画 debug 可视化）
 
         # ---- place sequentially, so target distribution is controlled ----
+        # 逐张摆放名片
         placed = 0
         for card_item in chosen_items:
             Wc, Hc = card_item.W, card_item.H
@@ -511,6 +520,7 @@ def synth_one_image(
                 continue
 
             # quick feasibility for single card under this canvas
+            # 极速可行性检测：算一下这张名片的半径，如果只放这一张名片，加上 margin 都塞不进背景图像，直接判为死局
             radius = 0.5 * math.sqrt(float(Wc * Wc + Hc * Hc))
             x_min = cfg.margin_to_img + radius
             x_max = img_w - cfg.margin_to_img - radius
@@ -522,6 +532,7 @@ def synth_one_image(
                 break
 
             success_this = False
+            # 每张名片有最多 max_place_trials_per_card 次（默认160次）机会去天上随机掉落找位置
             for _try in range(cfg.max_place_trials_per_card):
                 angle = rng.uniform(cfg.angle_min, cfg.angle_max)
                 cx = rng.uniform(x_min, x_max)
@@ -530,12 +541,15 @@ def synth_one_image(
                 M = build_affine_rotation_translation(Wc, Hc, angle, (cx, cy))
                 quad = affine_transform_points(M, card_corners(Wc, Hc))  # TL,TR,BR,BL
 
+                # 1. 检查所有的四个角有没有越过安全边距（margin）
                 if not corners_within_margin(quad, img_w, img_h, cfg.margin_to_img):
                     continue
 
+                # 2. 算出一个能包住这张旋转名片并且加上排斥 pad 边距的正矩形框（AABB大框）
                 xmin, ymin, xmax, ymax = bbox_from_points(quad)
                 exp_bbox = (xmin - pad, ymin - pad, xmax + pad, ymax + pad)
 
+                # 3. 粗筛碰撞检测：用这个极其简单的正矩形框，去和以前贴好名片的矩形框们检测撞没撞
                 hit = False
                 for b in placed_boxes_expanded:
                     if aabb_intersects(exp_bbox, b):
@@ -543,7 +557,8 @@ def synth_one_image(
                         break
                 if hit:
                     continue
-
+                
+                # 能走到这里，说明外框通过了。接下来计算它在背景上占据的局部 ROI（Region of Interest）坐标
                 roi = compute_roi_from_bbox((xmin, ymin, xmax, ymax), img_w, img_h, pad=pad)
                 if roi is None:
                     continue
@@ -551,32 +566,43 @@ def synth_one_image(
                 roi_w = rx1 - rx0
                 roi_h = ry1 - ry0
 
+                # 将世界坐标用的仿射矩阵 M，平移成局部 ROI 适用的坐标系 M_roi
                 M_roi = M.copy()
                 M_roi[0, 2] -= rx0
                 M_roi[1, 2] -= ry0
 
+                # ⭐性能核心所在：不旋转整张名图层，只对ROI尺寸这个巴掌大的区域做 cv2.warpAffine 旋转变换
                 warp_bgr_roi, warp_mask_roi_u8 = warp_affine_roi(
                     card_item.bgr, card_item.mask_u8, M_roi, roi_w=roi_w, roi_h=roi_h
                 )
 
                 # enforce min gap using dilated new mask vs occupancy
+                # 如果要求了间隙(pad>0)，就利用刚才生成的内核对这张旋转过后的 Mask 做一次形态学【膨胀】（变胖）
                 if kernel is not None:
                     dilated_roi = cv2.dilate(warp_mask_roi_u8, kernel, iterations=1)
                 else:
                     dilated_roi = warp_mask_roi_u8
 
+                # 像素级别终极检测：从占据图 occ 中切出当前所处的对应区域，将其与膨胀后的名片 Mask 做与运算。
+                # 如果非零（countNonZero > 0），说明有任意像素重合 -> 说明实际边缘撞击了，退回重试！
                 occ_roi = occ[ry0:ry1, rx0:rx1]
                 inter = cv2.bitwise_and(occ_roi, (dilated_roi > 0).astype(np.uint8) * 255)
                 if cv2.countNonZero(inter) > 0:
                     continue
 
-                # composite (NO color aug / NO blur / NO noise)
+                # composite (NO color aug / NO blur / NO noise) 
+                # 当前位置既不出界、也没有任何干涉，是个非常完美的地方
+
+                # 1. 物理叠加：将旋转后的彩色名片利用原 Mask 合成到真实大背景中
                 bg_roi = bg_bgr[ry0:ry1, rx0:rx1]
                 composite_roi_inplace(bg_roi, warp_bgr_roi, warp_mask_roi_u8)
+                
+                # 2. 更新占据图：将膨胀后的 Mask 叠加到全局占据图 occ 上，标记这块区域已被占用
                 occ_roi[:] = cv2.bitwise_or(occ_roi, (dilated_roi > 0).astype(np.uint8) * 255)
 
                 placed_boxes_expanded.append(exp_bbox)
 
+                # 3. 生成标签：根据四边形坐标生成 YOLO 格式的分割标签
                 l = yolo_seg_line(0, quad, img_w, img_h)
                 if l:
                     labels.append(l)
@@ -585,12 +611,14 @@ def synth_one_image(
                 placed += 1
                 success_this = True
                 break
-
+            
+            # 如果这张名片在天上试了所有次数（max_place_trials_per_card 次）都没成功（撞墙/出界）
             if not success_this:
                 # couldn't place this card -> retry whole image
                 placed = -999
                 break
 
+        # 名片的 for 循环结束。如果成功放完了预期数量的名片（或者 >= 最小要求的数目）：
         if placed >= cfg.min_cards:
             imwrite(out_img_path, bg_bgr)
             out_lbl_path.parent.mkdir(parents=True, exist_ok=True)
@@ -604,7 +632,7 @@ def synth_one_image(
 
     return False
 
-
+# 在批量生成几万甚至几十万张合成图片时，单核 CPU 会非常慢，因此程序把大任务拆分成多个小任务，交给不同的核心去同时进行。
 def worker_run(worker_id: int, indices: List[int], cfg: SynthConfig, bg_paths: List[str], card_paths: List[str]) -> None:
     out_img_dir = cfg.out_dir / "images"
     out_lbl_dir = cfg.out_dir / "labels"
@@ -641,7 +669,7 @@ def worker_run(worker_id: int, indices: List[int], cfg: SynthConfig, bg_paths: L
         if (k + 1) % 20 == 0:
             print(f"[Worker {worker_id}] done {k+1}/{len(indices)}", flush=True)
 
-
+# 简单的平均分配：把从 0 到 n-1 这 n 个任务号，轮流扔给每个核心
 def split_indices(n: int, num_workers: int) -> List[List[int]]:
     buckets = [[] for _ in range(num_workers)]
     for i in range(n):
