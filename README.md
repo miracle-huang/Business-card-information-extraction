@@ -14,10 +14,10 @@
 
 🚀 **ライブデモ**: [https://projectbusiness-card-information-extraction.streamlit.app/](https://projectbusiness-card-information-extraction.streamlit.app/)
 
-📱 **QRコード**: このQRコードは [ <img src="https://qrfy.com/favicon.ico" width="14" style="vertical-align: middle;"> QRFY](https://qrfy.com/)で作成されました。
+📱 **QRコード**: このQRコードは <img src="https://upload.wikimedia.org/wikipedia/commons/c/c1/Google_%22G%22_logo.svg" width="16" height="16" style="vertical-align: middle;"> Google で作成されました。
 <p align="left">
   <a href="https://projectbusiness-card-information-extraction.streamlit.app/">
-    <img src="images/qrcode.jpeg" width="120" alt="QR Code for Demo">
+    <img src="images/qrcode_projectbusiness-card-information-extraction.streamlit.app.png" width="120" alt="QR Code for Demo">
   </a>
   <br>
 </p>
