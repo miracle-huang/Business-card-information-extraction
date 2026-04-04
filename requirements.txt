@@ -1,19 +1,8 @@
-# ===== Core Frameworks =====
-ultralytics>=8.3.0
+streamlit
+numpy<2
+pillow
+tqdm
 torch
 torchvision
-
-# ===== OCR Engines =====
-easyocr
-
-# ===== Image Processing & Data =====
-# opencv-python # local
-opencv-python-headless # streamlit
-numpy
-pillow
-
-# ===== Utilities =====
-tqdm
-
-# ===== GUI =====
-streamlit
+easyocr==1.7.2
+opencv-python-headless==4.10.0.84

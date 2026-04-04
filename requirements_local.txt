@@ -1,0 +1,18 @@
+# ===== Core Frameworks =====
+ultralytics>=8.3.0
+torch
+torchvision
+
+# ===== OCR Engines =====
+easyocr
+
+# ===== Image Processing & Data =====
+opencv-python
+numpy
+pillow
+
+# ===== Utilities =====
+tqdm
+
+# ===== GUI =====
+streamlit
