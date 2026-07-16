@@ -243,6 +243,11 @@ Colab環境では以下の手順で実行できます:
 
 本プロジェクトの特徴的な学習戦略として、**動的データ合成**を採用しています。
 
+<p align="center">
+  <img src="images/epoch_50_random.png" width="80%" alt="epoch_50">
+  <br>
+</p>
+
 **過学習防止のための工夫:**
 
 ```
